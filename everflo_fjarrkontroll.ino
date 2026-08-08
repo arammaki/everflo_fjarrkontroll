@@ -29,7 +29,7 @@
 #include "esp_log.h"
 #include "esp_log.h"
 
-#define FW_VERSION "1.3"
+#define FW_VERSION "1.5"
 
 /* ---------------- MOTORVAL ---------------- */
 #define MOTOR_TMC 1               // NEMA17 + TMC2209 (STEP/DIR/EN)
@@ -211,7 +211,7 @@ bool kameraInit() {
   c.jpeg_quality = 12;
   c.fb_count     = 2;
   c.fb_location  = CAMERA_FB_IN_PSRAM;
-  c.grab_mode    = CAMERA_GRAB_LATEST;
+  c.grab_mode    = CAMERA_GRAB_WHEN_EMPTY;  // pausa när ingen tittar => inga FB-OVF
 
   if (esp_camera_init(&c) != ESP_OK) return false;
 
@@ -407,9 +407,12 @@ void setup() {
   // hemmets wifi och ange losenord. Sen ansluter den sjalv for alltid.
   WiFiManager wm;
   wm.setHostname("syrgas");
-  wm.setConnectTimeout(15);   // ge upp efter 15 s istallet for 60
+  wm.setConnectTimeout(15);        // per forsok
+  wm.setConnectRetries(3);         // tre forsok innan portal
+  wm.setConfigPortalTimeout(120);  // portal max 2 min, sen omstart+nytt forsok
   if (!wm.autoConnect("Syrgas-setup")) {
-    Serial.println("Wifi misslyckades - startar om");
+    logg("Wifi misslyckades - startar om och forsoker igen");
+    delay(500);
     ESP.restart();
   }
   logg(String("Ansluten! IP: ") + WiFi.localIP().toString());
@@ -424,10 +427,11 @@ void setup() {
 void loop() {
   static bool pa = false;
   static unsigned long t = 0;
-  if (millis() - t > 1000) {       // hjartslag: langsam blink = systemet lever
-    t = millis();
-    pa = !pa;
-    digitalWrite(HJARTSLAG_PIN, pa ? LOW : HIGH);
+  unsigned long nu = millis();
+  if (pa && nu - t > 1000) {        // 1 s tand ...
+    pa = false; t = nu; digitalWrite(HJARTSLAG_PIN, HIGH);
+  } else if (!pa && nu - t > 4000) { // ... 4 s vila
+    pa = true;  t = nu; digitalWrite(HJARTSLAG_PIN, LOW);
   }
   delay(50);
 }
