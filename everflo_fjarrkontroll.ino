@@ -28,7 +28,7 @@
 #include "esp_http_server.h"
 #include "esp_log.h"
 
-#define FW_VERSION "1.6"
+#define FW_VERSION "1.6.1"
 
 /* ---------------- MOTORVAL ---------------- */
 #define MOTOR_TMC 1               // NEMA17 + TMC2209 (STEP/DIR/EN)
@@ -373,7 +373,12 @@ void startaWebb() {
     if (httpd_start(&stream_httpd, &cfg2) == ESP_OK) {
       httpd_uri_t u = {.uri="/stream", .method=HTTP_GET, .handler=h_stream, .user_ctx=NULL};
       httpd_register_uri_handler(stream_httpd, &u);
+      logg("Streamserver: port 81 OK");
+    } else {
+      logg("STREAMSERVER MISSLYCKADES (port 81)");
     }
+  } else {
+    logg("Streamserver hoppas over (kamera saknas)");
   }
 }
 
