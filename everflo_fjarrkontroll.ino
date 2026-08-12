@@ -27,9 +27,8 @@
 #include <Preferences.h>
 #include "esp_http_server.h"
 #include "esp_log.h"
-#include "esp_log.h"
 
-#define FW_VERSION "1.5"
+#define FW_VERSION "1.6"
 
 /* ---------------- MOTORVAL ---------------- */
 #define MOTOR_TMC 1               // NEMA17 + TMC2209 (STEP/DIR/EN)
@@ -379,6 +378,30 @@ void startaWebb() {
 }
 
 /* ============================================================
+ *  SJÄLVLÄKANDE WIFI (drift)
+ *  Bootvägen läks av WiFiManager; detta täcker tappat nät EFTER
+ *  lyckad start: 3 återanslutningsförsök med 15 s mellanrum,
+ *  därefter omstart (WiFiManager tar då över med portal vid behov).
+ * ============================================================ */
+unsigned long wifiSenast = 0;
+int wifiForsok = 0;
+void wifiVakt() {
+  if (WiFi.status() == WL_CONNECTED) { wifiForsok = 0; return; }
+  unsigned long nu = millis();
+  if (nu - wifiSenast < 15000) return;
+  wifiSenast = nu;
+  wifiForsok++;
+  if (wifiForsok <= 3) {
+    logg(String("Wifi borta - aterforsok ") + wifiForsok + "/3");
+    WiFi.reconnect();
+  } else {
+    logg("Wifi kunde inte aterstallas - startar om");
+    delay(200);
+    ESP.restart();
+  }
+}
+
+/* ============================================================
  *  SETUP / LOOP
  * ============================================================ */
 void setup() {
@@ -425,6 +448,7 @@ void setup() {
 }
 
 void loop() {
+  wifiVakt();
   static bool pa = false;
   static unsigned long t = 0;
   unsigned long nu = millis();
