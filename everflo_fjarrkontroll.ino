@@ -28,7 +28,7 @@
 #include "esp_http_server.h"
 #include "esp_log.h"
 
-#define FW_VERSION "1.6.1"
+#define FW_VERSION "1.6.6"
 
 /* ---------------- MOTORVAL ---------------- */
 #define MOTOR_TMC 1               // NEMA17 + TMC2209 (STEP/DIR/EN)
@@ -42,7 +42,8 @@
 #define DEG_PER_TRYCK   15        // grader motoraxel per knapptryck.
                                   // Lego-mätning: ~15° ≈ 0,1 L med koaxial 1:1-koppling.
                                   // JUSTERA efter kalibrering mot bollen!
-#define RIKTNING        1         // 1 eller -1 om + går åt fel håll
+#define RIKTNING        -1        // 1 eller -1 om + går åt fel håll
+                                  // (-1 sedan v1.6.2: verifierat på plats hos mamma)
 #define MIN_LAGE        0
 #define MAX_LAGE        50        // mjukt tak i antal tryck från noll.
                                   // SÄTT till mammas ordinerade max efter kalibrering!
@@ -239,7 +240,9 @@ static const char SIDA[] = R"HTML(
  body{font-family:-apple-system,Helvetica,Arial,sans-serif;margin:0;background:#f4f4f2;
       display:flex;flex-direction:column;align-items:center;gap:14px;padding:12px}
  h1{font-size:1.3rem;margin:6px 0 0;color:#333}
- img{width:100%;max-width:480px;border-radius:12px;background:#000;min-height:200px}
+ #camwrap{width:100%;max-width:480px;aspect-ratio:3/4;overflow:hidden;border-radius:12px;
+          background:#000;display:flex;align-items:center;justify-content:center}
+ #camwrap img{width:133.4%;transform:rotate(90deg) scaleX(-1)}
  .lage{font-size:1.6rem;color:#333}
  .lage b{font-size:2.2rem}
  button{width:100%;max-width:480px;font-size:2.4rem;padding:26px 0;border:none;
@@ -251,15 +254,19 @@ static const char SIDA[] = R"HTML(
  .liten{font-size:.85rem;color:#888;margin-top:18px}
 </style></head><body>
 <h1>Syrgas – fjärrkontroll</h1>
-<img id="cam" alt="Kamerabild laddas...">
+<div id="camwrap"><img id="cam" alt="Kamerabild laddas..."></div>
 <div class="lage">Läge: <b id="lage">–</b></div>
 <button id="plus" onclick="tryck('plus')">+ MER</button>
 <button id="minus" onclick="tryck('minus')">&minus; MINDRE</button>
 <div id="msg"></div>
-<div class="liten"><a href="#" onclick="nollstall();return false">Nollställ räknare (tekniker)</a> · v%VER%</div>
+<div class="liten"><a href="#" onclick="nollstall();return false">Nollställ räknare (tekniker)</a> · <a href="#" onclick="omstart();return false">Starta om enheten</a> · v%VER%</div>
 <script>
 const PIN='%PIN%'; const q = PIN ? ('?pin='+PIN) : '';
-document.getElementById('cam').src = 'http://'+location.hostname+':81/stream';
+const cam=document.getElementById('cam');
+function nastaBild(){ cam.src='/bild?t='+Date.now(); }
+cam.onload  = ()=>setTimeout(nastaBild, 250);   // ~4 bilder/s när nätet hänger med
+cam.onerror = ()=>setTimeout(nastaBild, 1000);  // lugn takt vid fel, självläkande
+nastaBild();
 async function status(){
   try{ const j = await (await fetch('/api/status'+q)).json();
        document.getElementById('lage').textContent = j.lage; }catch(e){}
@@ -279,6 +286,11 @@ async function nollstall(){
   if(!confirm('Nollställa räknaren? (endast vid ominstallation)'))return;
   const j = await (await fetch('/api/nollstall'+q)).json();
   document.getElementById('lage').textContent=j.lage;
+}
+async function omstart(){
+  if(!confirm('Starta om enheten? Bilden återkommer inom en minut.'))return;
+  try{ await fetch('/api/omstart'+q); }catch(e){}
+  document.getElementById('msg').textContent='Startar om...';
 }
 status(); setInterval(status,10000);
 </script></body></html>
@@ -311,6 +323,14 @@ esp_err_t h_plus(httpd_req_t *req)  { if(!pinOK(req)) return httpd_resp_send_err
 esp_err_t h_minus(httpd_req_t *req) { if(!pinOK(req)) return httpd_resp_send_err(req,HTTPD_403_FORBIDDEN,"pin"); return svaraJson(req, flytta(-1)); }
 esp_err_t h_noll(httpd_req_t *req)  { if(!pinOK(req)) return httpd_resp_send_err(req,HTTPD_403_FORBIDDEN,"pin"); lage=0; prefs.putInt("lage",0); return svaraJson(req,true); }
 esp_err_t h_status(httpd_req_t *req){ return svaraJson(req, true); }
+esp_err_t h_omstart(httpd_req_t *req){
+  if(!pinOK(req)) return httpd_resp_send_err(req,HTTPD_403_FORBIDDEN,"pin");
+  svaraJson(req, true);
+  logg("Omstart via webblanken");
+  delay(300);
+  ESP.restart();
+  return ESP_OK;
+}
 esp_err_t h_log(httpd_req_t *req) {
   String s;
   for (int i = 0; i < 40; i++) {
@@ -355,13 +375,14 @@ esp_err_t h_stream(httpd_req_t *req) {
 void startaWebb() {
   httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
   cfg.server_port = 80;
-  cfg.max_uri_handlers = 8;
+  cfg.max_uri_handlers = 10;
   if (httpd_start(&ctrl_httpd, &cfg) == ESP_OK) {
     httpd_uri_t u;
     u = {.uri="/",              .method=HTTP_GET, .handler=h_index,  .user_ctx=NULL}; httpd_register_uri_handler(ctrl_httpd,&u);
     u = {.uri="/api/plus",      .method=HTTP_GET, .handler=h_plus,   .user_ctx=NULL}; httpd_register_uri_handler(ctrl_httpd,&u);
     u = {.uri="/api/minus",     .method=HTTP_GET, .handler=h_minus,  .user_ctx=NULL}; httpd_register_uri_handler(ctrl_httpd,&u);
     u = {.uri="/api/nollstall", .method=HTTP_GET, .handler=h_noll,   .user_ctx=NULL}; httpd_register_uri_handler(ctrl_httpd,&u);
+    u = {.uri="/api/omstart",   .method=HTTP_GET, .handler=h_omstart,.user_ctx=NULL}; httpd_register_uri_handler(ctrl_httpd,&u);
     u = {.uri="/api/status",    .method=HTTP_GET, .handler=h_status, .user_ctx=NULL}; httpd_register_uri_handler(ctrl_httpd,&u);
     u = {.uri="/log",           .method=HTTP_GET, .handler=h_log,    .user_ctx=NULL}; httpd_register_uri_handler(ctrl_httpd,&u);
     u = {.uri="/bild",          .method=HTTP_GET, .handler=h_still,  .user_ctx=NULL}; httpd_register_uri_handler(ctrl_httpd,&u);
@@ -370,6 +391,9 @@ void startaWebb() {
     httpd_config_t cfg2 = HTTPD_DEFAULT_CONFIG();
     cfg2.server_port = 81;
     cfg2.ctrl_port   = 32769;      // egen kontrollport, krockar annars med 80-servern
+    cfg2.lru_purge_enable = true;  // kasta äldsta anslutningen vid brist
+    cfg2.send_wait_timeout = 5;    // släpp döda klienter inom 5 s
+    cfg2.recv_wait_timeout = 5;
     if (httpd_start(&stream_httpd, &cfg2) == ESP_OK) {
       httpd_uri_t u = {.uri="/stream", .method=HTTP_GET, .handler=h_stream, .user_ctx=NULL};
       httpd_register_uri_handler(stream_httpd, &u);
