@@ -5,10 +5,10 @@
  *   - Captive portal för wifi-konfiguration (WiFiManager)
  *   - MJPEG-kamerastream (port 81) av flödesmätarens boll
  *   - Svensk webbsida (port 80) med stora +/− knappar
- *   - Motorstyrning: NEMA17+TMC2209 (huvudspår) eller
- *     28BYJ-48+ULN2003 (fallback) – välj med MOTOR_VAL
- *   - Friläge mellan justeringar (EN-pin / spolar av)
- *   - Mjuka gränser MIN_LAGE..MAX_LAGE, läge sparas i flash
+ *   - Motorstyrning: NEMA17+TMC2209 (STEP/DIR/EN)
+ *   - Friläge mellan justeringar (EN-pin)
+ *   - Lägesräknare sparas i flash (endast information – kameran
+ *     är facit; ratten kan vridas manuellt eller slira)
  *   - Kamerasensor-PID skrivs i seriell logg vid start
  *
  *  Arduino IDE-inställningar:
@@ -28,13 +28,9 @@
 #include "esp_http_server.h"
 #include "esp_log.h"
 
-#define FW_VERSION "1.6.6"
+#define FW_VERSION "1.7.0"
 
-/* ---------------- MOTORVAL ---------------- */
-#define MOTOR_TMC 1               // NEMA17 + TMC2209 (STEP/DIR/EN)
-#define MOTOR_ULN 2               // 28BYJ-48 + ULN2003
-#define MOTOR_VAL MOTOR_TMC       // <-- byt vid behov
-
+/* ---------------- MOTOR ---------------- */
 #define ANVAND_TMC_UART 0         // 1 = strömstyrning+äkta freewheel via UART
                                   //     (kräver TMCStepper-bibliotek + 1k-motstånd, se README)
 
@@ -44,9 +40,8 @@
                                   // JUSTERA efter kalibrering mot bollen!
 #define RIKTNING        -1        // 1 eller -1 om + går åt fel håll
                                   // (-1 sedan v1.6.2: verifierat på plats hos mamma)
-#define MIN_LAGE        0
-#define MAX_LAGE        50        // mjukt tak i antal tryck från noll.
-                                  // SÄTT till mammas ordinerade max efter kalibrering!
+#define STEG_GRADER_MIN 4         // klampgränser för /api/steg: ca 25–300 %
+#define STEG_GRADER_MAX 45        // av DEG_PER_TRYCK (15). Endast RAM, se stegGrader.
 #define MIKROSTEG       8         // TMC2209 standalone: MS1=MS2=GND => 1/8
 #define STEG_PAUS_US    2500      // µs mellan mikrosteg (lägre = snabbare)
 
@@ -59,18 +54,11 @@
 #define KAMERA_HMIRROR  0         // 1 om spegelvänd
 
 /* ---------------- PINNAR ---------------- */
-#if MOTOR_VAL == MOTOR_TMC
-  #define PIN_STEP D0
-  #define PIN_DIR  D1
-  #define PIN_EN   D2             // aktiv LÅG. HÖG = drivare av = friläge
-  #define PIN_TMC_RX D7           // endast UART-läget
-  #define PIN_TMC_TX D6
-#else
-  #define PIN_IN1 D0
-  #define PIN_IN2 D1
-  #define PIN_IN3 D2
-  #define PIN_IN4 D3
-#endif
+#define PIN_STEP D0
+#define PIN_DIR  D1
+#define PIN_EN   D2               // aktiv LÅG. HÖG = drivare av = friläge
+#define PIN_TMC_RX D7             // endast UART-läget
+#define PIN_TMC_TX D6
 
 #if ANVAND_TMC_UART
   #include <TMCStepper.h>
@@ -100,6 +88,8 @@
 Preferences prefs;
 volatile int lage = 0;            // nuvarande position i antal tryck
 volatile bool upptagen = false;   // motor i rörelse
+volatile int stegGrader = DEG_PER_TRYCK;  // grader/tryck, justerbar via /api/steg
+                                          // (endast RAM – omstart = standard)
 bool kameraOK = false;
 httpd_handle_t ctrl_httpd = NULL;
 httpd_handle_t stream_httpd = NULL;
@@ -117,10 +107,8 @@ void logg(const String &s) {
 /* ============================================================
  *  MOTOR
  * ============================================================ */
-#if MOTOR_VAL == MOTOR_TMC
-
 int stegPerTryck() {              // mikrosteg per tryck
-  return (int)(DEG_PER_TRYCK / (1.8f / MIKROSTEG) + 0.5f);
+  return (int)(stegGrader / (1.8f / MIKROSTEG) + 0.5f);
 }
 void motorInit() {
   pinMode(PIN_STEP, OUTPUT);
@@ -147,40 +135,10 @@ void motorSteg(int riktning) {
   }
 }
 
-#else /* MOTOR_ULN – 28BYJ-48 halvsteg */
-
-const uint8_t SEKV[8] = {0b0001,0b0011,0b0010,0b0110,0b0100,0b1100,0b1000,0b1001};
-int sekvIdx = 0;
-int stegPerTryck() {              // ~4096 halvsteg/varv => 11,38 steg per grad
-  return (int)(DEG_PER_TRYCK * 4096.0f / 360.0f + 0.5f);
-}
-void skrivFas(uint8_t f) {
-  digitalWrite(PIN_IN1, f & 1); digitalWrite(PIN_IN2, (f>>1) & 1);
-  digitalWrite(PIN_IN3, (f>>2) & 1); digitalWrite(PIN_IN4, (f>>3) & 1);
-}
-void motorInit() {
-  pinMode(PIN_IN1, OUTPUT); pinMode(PIN_IN2, OUTPUT);
-  pinMode(PIN_IN3, OUTPUT); pinMode(PIN_IN4, OUTPUT);
-  skrivFas(0);                    // spolar av = "friläge" (växellådan bromsar ändå)
-}
-void motorTaI()   { }
-void motorSlapp() { skrivFas(0); }
-void motorSteg(int riktning) {
-  int n = stegPerTryck();
-  int d = (riktning * RIKTNING) > 0 ? 1 : -1;
-  for (int i = 0; i < n; i++) {
-    sekvIdx = (sekvIdx + d + 8) % 8;
-    skrivFas(SEKV[sekvIdx]);
-    delayMicroseconds(STEG_PAUS_US);
-  }
-}
-#endif
-
-/* Gemensam rörelse med gränser + spara läge */
+/* Rörelse + spara läge (räknaren är information, inte spärr) */
 bool flytta(int riktning) {
   if (upptagen) return false;
   int nytt = lage + riktning;
-  if (nytt < MIN_LAGE || nytt > MAX_LAGE) return false;
   upptagen = true;
   motorTaI();
   motorSteg(riktning);
@@ -278,7 +236,7 @@ async function tryck(op){
   try{
     const j = await (await fetch('/api/'+op+q)).json();
     document.getElementById('lage').textContent = j.lage;
-    if(!j.ok) document.getElementById('msg').textContent='Gränsen är nådd';
+    if(!j.ok) document.getElementById('msg').textContent='Motorn är upptagen – vänta';
   }catch(e){ document.getElementById('msg').textContent='Ingen kontakt'; }
   b1.disabled=b2.disabled=false;
 }
@@ -306,8 +264,8 @@ bool pinOK(httpd_req_t *req) {
 
 esp_err_t svaraJson(httpd_req_t *req, bool ok) {
   char b[64];
-  snprintf(b, sizeof(b), "{\"ok\":%s,\"lage\":%d,\"max\":%d}",
-           ok ? "true" : "false", lage, MAX_LAGE);
+  snprintf(b, sizeof(b), "{\"ok\":%s,\"lage\":%d}",
+           ok ? "true" : "false", lage);
   httpd_resp_set_type(req, "application/json");
   return httpd_resp_send(req, b, HTTPD_RESP_USE_STRLEN);
 }
@@ -330,6 +288,31 @@ esp_err_t h_omstart(httpd_req_t *req){
   delay(300);
   ESP.restart();
   return ESP_OK;
+}
+/* Stegstorlek (grader/tryck), endast RAM. Samma CORS som /bild. */
+esp_err_t svaraStegJson(httpd_req_t *req) {
+  char b[96];
+  snprintf(b, sizeof(b), "{\"steg\":%d,\"min\":%d,\"max\":%d,\"standard\":%d}",
+           stegGrader, STEG_GRADER_MIN, STEG_GRADER_MAX, DEG_PER_TRYCK);
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+  return httpd_resp_send(req, b, HTTPD_RESP_USE_STRLEN);
+}
+esp_err_t h_steg(httpd_req_t *req) {
+  if(!pinOK(req)) return httpd_resp_send_err(req,HTTPD_403_FORBIDDEN,"pin");
+  char buf[64]; char val[16] = "";
+  if (httpd_req_get_url_query_str(req, buf, sizeof(buf)) == ESP_OK &&
+      httpd_query_key_value(buf, "v", val, sizeof(val)) == ESP_OK) {
+    char *slut = NULL;
+    long v = strtol(val, &slut, 10);
+    if (slut != val && *slut == '\0' && v >= 0) {  // ogiltigt/negativt/tomt = ignorera
+      if (v < STEG_GRADER_MIN) v = STEG_GRADER_MIN;
+      if (v > STEG_GRADER_MAX) v = STEG_GRADER_MAX;
+      stegGrader = (int)v;
+      logg(String("Stegstorlek: ") + stegGrader + " grader/tryck");
+    }
+  }
+  return svaraStegJson(req);
 }
 esp_err_t h_log(httpd_req_t *req) {
   String s;
@@ -384,6 +367,7 @@ void startaWebb() {
     u = {.uri="/api/nollstall", .method=HTTP_GET, .handler=h_noll,   .user_ctx=NULL}; httpd_register_uri_handler(ctrl_httpd,&u);
     u = {.uri="/api/omstart",   .method=HTTP_GET, .handler=h_omstart,.user_ctx=NULL}; httpd_register_uri_handler(ctrl_httpd,&u);
     u = {.uri="/api/status",    .method=HTTP_GET, .handler=h_status, .user_ctx=NULL}; httpd_register_uri_handler(ctrl_httpd,&u);
+    u = {.uri="/api/steg",      .method=HTTP_GET, .handler=h_steg,   .user_ctx=NULL}; httpd_register_uri_handler(ctrl_httpd,&u);
     u = {.uri="/log",           .method=HTTP_GET, .handler=h_log,    .user_ctx=NULL}; httpd_register_uri_handler(ctrl_httpd,&u);
     u = {.uri="/bild",          .method=HTTP_GET, .handler=h_still,  .user_ctx=NULL}; httpd_register_uri_handler(ctrl_httpd,&u);
   }
@@ -443,12 +427,10 @@ void setup() {
 
   prefs.begin("everflo", false);
   lage = prefs.getInt("lage", 0);
-  Serial.printf("Sparat lage: %d (max %d)\n", lage, MAX_LAGE);
+  Serial.printf("Sparat lage: %d\n", lage);
 
   motorInit();
-  Serial.printf("Motorlage: %s, %d grader/tryck\n",
-                MOTOR_VAL==MOTOR_TMC ? "NEMA17+TMC2209" : "28BYJ-48+ULN2003",
-                DEG_PER_TRYCK);
+  Serial.printf("Motor: NEMA17+TMC2209, %d grader/tryck\n", DEG_PER_TRYCK);
 
   esp_log_level_set("cam_hal", ESP_LOG_NONE);  // tysta ofarliga FB-OVF-rader
   kameraOK = kameraInit();

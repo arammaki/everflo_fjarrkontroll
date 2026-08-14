@@ -54,7 +54,7 @@ position 8 = the potentiometer/gold-hole end:
 4. EN idles HIGH (motor free) — that IS the manual override; never hold the
    motor energized outside an actual movement.
 
-## Firmware architecture (v1.6.6)
+## Firmware architecture (v1.7.0)
 
 Single sketch `everflo_fjarrkontroll.ino`. Key pieces:
 - **WiFiManager**: portal SSID "Syrgas-setup", 15 s × 3 connect attempts,
@@ -62,10 +62,14 @@ Single sketch `everflo_fjarrkontroll.ino`. Key pieces:
   runtime drops (3 × 15 s reconnects → `ESP.restart()`).
 - **mDNS**: `syrgas.local`.
 - **Web server port 80**: `/` (UI), `/api/plus`, `/api/minus`,
-  `/api/nollstall`, `/api/omstart`, `/api/status`, `/log`, `/bild`.
-  `/bild` sends `Access-Control-Allow-Origin: *` (the external
-  bolldetektor.html tool depends on this). JSON APIs currently do NOT send
-  CORS headers (wishlist).
+  `/api/nollstall`, `/api/omstart`, `/api/status`, `/api/steg`, `/log`,
+  `/bild`. `/bild` and `/api/steg` send `Access-Control-Allow-Origin: *`
+  (the external bolldetektor.html tool depends on this). Other JSON APIs
+  currently do NOT send CORS headers (wishlist).
+- **`/api/steg`**: GET returns `{"steg":N,"min":4,"max":45,"standard":15}`
+  (degrees per press); `?v=N` sets it, clamped to compiled 4..45, RAM only
+  (reboot = compiled default `DEG_PER_TRYCK`). Invalid/negative/empty `v`
+  is ignored.
 - **Stream server port 81**: `/stream` MJPEG, viewer-kickout via
   `stream_gen` (newest viewer wins), `lru_purge_enable`, 5 s send/recv
   timeouts. The main page does NOT use it — it polls `/bild` (relative URL)
@@ -75,8 +79,10 @@ Single sketch `everflo_fjarrkontroll.ino`. Key pieces:
 - **Camera**: `CAMERA_GRAB_WHEN_EMPTY`; `KAMERA_VFLIP`/`KAMERA_HMIRROR`
   defines exist; display rotation is done in the page CSS
   (`rotate(90deg) scaleX(-1)`), not in the sensor.
-- **Position counter** `lage` persisted via Preferences; bounds 0..MAX_LAGE
-  enforced server-side; survives power loss (verified).
+- **Position counter** `lage` persisted via Preferences; survives power
+  loss (verified). Informational only since v1.7.0 — MIN_LAGE/MAX_LAGE
+  removed (manual knob turns / cup slip made them unreliable; the camera
+  is the source of truth).
 - **`RIKTNING -1`** (verified on-site): flips motor direction for both
   buttons; never "fix" direction by swapping button handlers — that inverts
   counter semantics.
@@ -96,7 +102,7 @@ Single sketch `everflo_fjarrkontroll.ino`. Key pieces:
   by the external `bolldetektor.html` (fire-and-forget no-cors) — do not
   rename or change semantics.
 - Safety in code: never move the motor without an explicit user action;
-  never remove the bounds check; never leave EN low after a movement.
+  never leave EN low after a movement.
 
 ## Build & flash
 
