@@ -51,7 +51,7 @@
   #define INGEST_TOKEN ""
 #endif
 
-#define FW_VERSION "1.7.1"
+#define FW_VERSION "1.7.2"
 
 /* ---------------- MOTOR ---------------- */
 #define USE_TMC_UART 0            // 1 = current control + true freewheel over UART
@@ -201,7 +201,16 @@ bool cameraInit() {
   c.jpeg_quality = 12;
   c.fb_count     = 2;
   c.fb_location  = CAMERA_FB_IN_PSRAM;
-  c.grab_mode    = CAMERA_GRAB_WHEN_EMPTY;  // idle when nobody watches => no FB-OVF
+  // LATEST, not WHEN_EMPTY. The driver's own header says WHEN_EMPTY means
+  // "first 'fb_count' frames might be old" — and they can be minutes old
+  // after a quiet spell, because capture stops once both buffers are full.
+  // Observed 2026-08-15: /bild served a frame from a minute earlier, so the
+  // page showed the past while claiming to show the present. That is the one
+  // thing this system must never do. LATEST keeps the queue current at the
+  // cost of capturing continuously; the FB-OVF chatter it can produce is
+  // already silenced below, and the unit runs on mains.
+  // Pixel geometry and format are untouched, so the calibration is unaffected.
+  c.grab_mode    = CAMERA_GRAB_LATEST;
 
   if (esp_camera_init(&c) != ESP_OK) return false;
 
@@ -529,6 +538,15 @@ bool uploadFrame(const char *reason) {
   camera_fb_t *fb = esp_camera_fb_get();
   if (!fb) return false;
 
+  // Copy the JPEG and hand the frame buffer straight back. Holding it for the
+  // whole TLS upload — up to 15 s on a weak link — starved /bild of buffers
+  // and made the live page stutter while a picture was being sent.
+  size_t len = fb->len;
+  uint8_t *jpeg = (uint8_t *)ps_malloc(len);
+  if (jpeg) memcpy(jpeg, fb->buf, len);
+  esp_camera_fb_return(fb);
+  if (!jpeg) { logLine("Upload: out of PSRAM"); return false; }
+
   String url = String(INGEST_URL) + "?reason=" + reason +
                "&position=" + position +
                "&steg=" + stepDegrees +
@@ -545,7 +563,7 @@ bool uploadFrame(const char *reason) {
     http.setTimeout(15000);           // 30 kB over TLS on a weak link
     http.addHeader("authorization", "Bearer " INGEST_TOKEN);
     http.addHeader("content-type", "image/jpeg");
-    int code = http.POST(fb->buf, fb->len);
+    int code = http.POST(jpeg, len);
     ok = (code == 204);
     // Rate-limited for the same reason as the ping: a sustained outage
     // would otherwise flush the 40-line ring and take the wifi lines that
@@ -558,7 +576,7 @@ bool uploadFrame(const char *reason) {
     }
     http.end();
   }
-  esp_camera_fb_return(fb);
+  free(jpeg);
   return ok;
 }
 
