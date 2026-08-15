@@ -28,11 +28,22 @@
 
 #include "esp_camera.h"
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <HTTPClient.h>
 #include <WiFiManager.h>          // tzapu – captive portal
 #include <ESPmDNS.h>
 #include <Preferences.h>
 #include "esp_http_server.h"
 #include "esp_log.h"
+
+/* Local, gitignored. See secrets.h.example. Everything it configures is
+   optional: without the file the sketch still builds, with the feature off. */
+#if __has_include("secrets.h")
+  #include "secrets.h"
+#endif
+#ifndef HEALTHCHECK_URL
+  #define HEALTHCHECK_URL ""      // empty = health ping disabled
+#endif
 
 #define FW_VERSION "1.7.0"
 
@@ -415,6 +426,59 @@ void startWebServer() {
 }
 
 /* ============================================================
+ *  HEALTH PING (dead man's switch)
+ *  A ping every 5 minutes to healthchecks.io. Sending nothing IS the
+ *  alarm, so a dead camera simply skips the ping and lets the grace
+ *  period expire — no need for an explicit failure signal.
+ *  Gate on a real frame: without it we would only be reporting "the
+ *  ESP32 has power", and a wedged camera is exactly the fault that
+ *  otherwise never surfaces.
+ * ============================================================ */
+#define PING_INTERVAL_MS 300000UL   // 5 min. Pair with grace 15 min at the
+                                    // other end: alerts 20 min after silence.
+unsigned long lastPing = 0;
+
+bool cameraDelivers() {
+  if (!cameraOK) return false;
+  camera_fb_t *fb = esp_camera_fb_get();
+  if (!fb) return false;
+  bool ok = fb->len > 1000;         // a plausible JPEG, not a truncated frame
+  esp_camera_fb_return(fb);
+  return ok;
+}
+
+/* Blocks for the TLS handshake (1-3 s). That is fine here: the web server
+   runs in its own task, so only the heartbeat LED pauses. */
+void pingHealth() {
+  if (strlen(HEALTHCHECK_URL) == 0) return;
+  WiFiClientSecure client;
+  client.setInsecure();             // no cert pinning. The ping carries no
+                                    // secret, and a man in the middle can only
+                                    // suppress it — which shows up as a missed
+                                    // check, i.e. the alarm we already want.
+  HTTPClient http;
+  if (!http.begin(client, HEALTHCHECK_URL)) {
+    logLine("Ping: begin failed");
+    return;
+  }
+  // Timeouts set on HTTPClient only: Client::setTimeout has meant seconds in
+  // some core versions and milliseconds in others, and getting it wrong the
+  // slow way would block loop() for a very long time.
+  http.setConnectTimeout(5000);
+  http.setTimeout(5000);
+  int code = http.GET();
+  http.end();
+  // Only failures are logged, and at most one per hour. Successes would
+  // flush the 40-line ring within hours, and so would a sustained outage —
+  // which is exactly when the wifi lines above it are worth keeping.
+  static unsigned long lastFailLog = 0;
+  if (code != 200 && (lastFailLog == 0 || millis() - lastFailLog > 3600000UL)) {
+    lastFailLog = millis();
+    logLine(String("Ping: HTTP ") + code + ", heap " + ESP.getFreeHeap());
+  }
+}
+
+/* ============================================================
  *  SELF-HEALING WIFI (runtime)
  *  The boot path is healed by WiFiManager; this covers a network
  *  lost AFTER a successful start: 3 reconnect attempts 15 s apart,
@@ -423,7 +487,13 @@ void startWebServer() {
 unsigned long wifiLastTry = 0;
 int wifiAttempts = 0;
 void wifiWatchdog() {
-  if (WiFi.status() == WL_CONNECTED) { wifiAttempts = 0; return; }
+  if (WiFi.status() == WL_CONNECTED) {
+    // Back after a drop: ping straight away so the outage reads as a short
+    // gap rather than a long one, and a brief blip never reaches the alarm.
+    if (wifiAttempts > 0) lastPing = millis() - PING_INTERVAL_MS;
+    wifiAttempts = 0;
+    return;
+  }
   unsigned long now = millis();
   if (now - wifiLastTry < 15000) return;
   wifiLastTry = now;
@@ -479,11 +549,23 @@ void setup() {
 
   startWebServer();
   Serial.println("Web page: port 80, stream: port 81");
+  logLine(strlen(HEALTHCHECK_URL) ? "Health ping: on, every 5 min"
+                                  : "Health ping: off (no secrets.h)");
   logLine("=== Ready ===");
+
+  lastPing = millis();
+  if (cameraDelivers()) pingHealth();   // boot ping shortens the outage gap
 }
 
 void loop() {
   wifiWatchdog();
+
+  if (!busy && WiFi.status() == WL_CONNECTED &&
+      millis() - lastPing > PING_INTERVAL_MS) {
+    lastPing = millis();                 // reset first: a failed camera must
+    if (cameraDelivers()) pingHealth();  // retry in 5 min, not spin
+  }
+
   static bool on = false;
   static unsigned long t = 0;
   unsigned long now = millis();

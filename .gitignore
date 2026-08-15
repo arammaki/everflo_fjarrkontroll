@@ -11,3 +11,6 @@ build/
 node_modules/
 .dev.vars
 .env
+
+# lokala hemligheter (se secrets.h.example)
+secrets.h
