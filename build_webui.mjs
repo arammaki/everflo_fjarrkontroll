@@ -20,7 +20,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const SOURCE = 'balldetector.js';
-const TARGETS = ['everflo_kontrollpanel.html', 'everflo_bilddiagnostik.html'];
+const TARGETS = ['everflo_control_panel.html', 'everflo_image_diagnostics.html'];
 
 const BEGIN = '/* === ENGINE:BEGIN — generated from balldetector.js, do not edit here === */';
 const END = '/* === ENGINE:END === */';

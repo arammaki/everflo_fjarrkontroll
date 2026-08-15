@@ -57,7 +57,7 @@ position 8 = the potentiometer/gold-hole end:
 
 ## Firmware architecture (v1.7.0)
 
-Single sketch `everflo_fjarrkontroll.ino`. Key pieces:
+Single sketch `everflo_remote_control.ino`. Key pieces:
 - **WiFiManager**: portal SSID "Syrgas-setup", 15 s × 3 connect attempts,
   120 s portal timeout, restart on failure. `wifiVakt()` in `loop()` heals
   runtime drops (3 × 15 s reconnects → `ESP.restart()`).
@@ -65,7 +65,7 @@ Single sketch `everflo_fjarrkontroll.ino`. Key pieces:
 - **Web server port 80**: `/` (UI), `/api/plus`, `/api/minus`,
   `/api/nollstall`, `/api/omstart`, `/api/status`, `/api/steg`, `/log`,
   `/bild`. `/bild` and `/api/steg` send `Access-Control-Allow-Origin: *`
-  (the companion `everflo_kontrollpanel.html` depends on this — see Web
+  (the companion `everflo_control_panel.html` depends on this — see Web
   UI section). Other JSON APIs currently do NOT send CORS headers
   (wishlist).
 - **`/api/steg`**: GET returns `{"steg":N,"min":4,"max":45,"standard":15}`
@@ -98,12 +98,20 @@ Single sketch `everflo_fjarrkontroll.ino`. Key pieces:
   - **Swedish**: every string the operator or patient reads — the device
     page, the control panel UI, the `judge()` reason texts. She does not
     read English. Never translate these.
+  - **English**: file names, the sketch directory, and cloud resource
+    names (D1 `everflo`, R2 `everflo-images`). Arduino constraint: the
+    sketch folder and the `.ino` must share a name, so renaming one means
+    renaming both — and IntelliJ then has to reopen the project.
   - **Unchanged, in either language**: wire formats. URL paths
     (`/bild`, `/api/nollstall`, `/api/omstart`, `/api/steg`), JSON field
     names (`lage`, `steg`), the NVS key `"lage"`, and the localStorage
     keys (`ev_logg`, `ev_host`, `ev_rot`, `ev_spegel`). Renaming the NVS
     key loses the stored position; renaming the rest breaks the control
     panel or the user's saved settings.
+  - **Still Swedish, deliberately**: the saved calibration image prefix
+    `bild_<flow>L_<timestamp>.jpg`. The existing labelled dataset and the
+    (external) test suite parse it. Change it only together with a fresh
+    labelled sweep, and say so out loud when you do.
 - **Bump `FW_VERSION` on every behavioral change** — the page footer shows
   it, and it is how the user verifies a flash actually took (cache traps).
 - One focused change per commit; commit message style for firmware changes:
@@ -111,7 +119,7 @@ Single sketch `everflo_fjarrkontroll.ino`. Key pieces:
 - `loop()` must stay non-blocking (heartbeat + wifiVakt + button debounce
   live there). No `delay()` in handlers beyond the existing brief ones.
 - Backward compatibility: `/bild`, `/api/plus`, `/api/minus` are consumed
-  by the companion `everflo_kontrollpanel.html` (fire-and-forget no-cors)
+  by the companion `everflo_control_panel.html` (fire-and-forget no-cors)
   — do not rename or change semantics.
 - Safety in code: never move the motor without an explicit user action;
   never leave EN low after a movement.
@@ -139,10 +147,10 @@ Architecture: the firmware serves its own minimal control page
 (camera picture + buttons) at syrgas.local. The HTML files in this
 repo are NOT served by the device — they are companion pages opened
 directly in a phone/desktop browser, talking to the device cross-
-origin. `everflo_kontrollpanel.html` polls `http://<host>/bild`,
+origin. `everflo_control_panel.html` polls `http://<host>/bild`,
 analyzes frames in JS, shows flow, drives the knob motor via
 `/api/plus|minus`, logs data, and saves labeled calibration images
-(`bild_<flow>L_<timestamp>.jpg`). `everflo_bilddiagnostik.html`
+(`bild_<flow>L_<timestamp>.jpg`). `everflo_image_diagnostics.html`
 analyzes saved images offline with per-gate diagnostics.
 
 Two shell invariants (both are bug fixes — do not "simplify" them away):
@@ -224,9 +232,9 @@ control panel does not call it yet.
 
 ## Wishlist / backlog
 - CORS headers on the remaining JSON APIs (`/api/plus|minus|status|nollstall`)
-  — would give `everflo_kontrollpanel.html` readable responses; `/api/steg`
+  — would give `everflo_control_panel.html` readable responses; `/api/steg`
   already has them (v1.7.0)
-- Step size control in `everflo_kontrollpanel.html` via `/api/steg`
+- Step size control in `everflo_control_panel.html` via `/api/steg`
 - `/api/glomwifi` (force portal without physical access)
 - ArduinoOTA (flash over wifi — unit will live at my mother's)
 - DEG_PER_PRESS calibration against the ball position

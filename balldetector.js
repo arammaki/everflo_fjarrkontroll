@@ -1,8 +1,8 @@
 /* ============================================================
    Ball detector — the detection engine. SINGLE SOURCE.
 
-   This file is inlined verbatim into everflo_kontrollpanel.html and
-   everflo_bilddiagnostik.html between the ENGINE:BEGIN/ENGINE:END
+   This file is inlined verbatim into everflo_control_panel.html and
+   everflo_image_diagnostics.html between the ENGINE:BEGIN/ENGINE:END
    markers. Edit here, never in the HTML copies, then run:
 
        node build_webui.mjs
