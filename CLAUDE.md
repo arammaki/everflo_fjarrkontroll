@@ -19,7 +19,7 @@ and verify.
 |---|---|
 | MCU | Seeed XIAO ESP32-S3 **Sense** (OV3660 camera, PID 0x3660; OV2640 also supported by PID check) |
 | Driver | TMC2209 clone breakout, standalone/legacy mode (no UART), unmarked — see pin map below |
-| Motor | NEMA 17 pancake (17HE08-1004S), 0.9°... driven 1/8 microstep? — see stepsPerPress() in code; default 15°/press, adjustable via /api/steg |
+| Motor | NEMA 17 pancake (17HE08-1004S), 0.9°... driven 1/8 microstep? — see stepsPerPress() in code; default 39°/press, adjustable via /api/steg |
 | Motor PSU | MB102 breadboard supply, jumper 5V, barrel input **needs 7–12 V** (1117 regulators, ~1 V dropout) |
 | Cup | 3D-printed conical cup on the D-shaft (Ø5.18 bore / flat 4.71), M3 set screw against the flat |
 
@@ -79,7 +79,7 @@ Single sketch `everflo_remote_control.ino`. Key pieces:
   `/bild`. All JSON APIs and `/bild` send `Access-Control-Allow-Origin: *`
   (since v1.7.1) — the companion `everflo_control_panel.html` runs from a
   different origin and depends on it. See the Web UI section.
-- **`/api/steg`**: GET returns `{"steg":N,"min":4,"max":45,"standard":15}`
+- **`/api/steg`**: GET returns `{"steg":N,"min":4,"max":45,"standard":39}`
   (degrees per press); `?v=N` sets it, clamped to compiled 4..45, RAM only
   (reboot = compiled default `DEG_PER_PRESS`). Invalid/negative/empty `v`
   is ignored.
@@ -256,8 +256,8 @@ Never auto-flash or trigger OTA; flash manually on-site, keeping the
 previous firmware as fallback. Current UI needs only `/bild` +
 `/api/plus|minus` (stable since v1.6.6). `/api/steg?v=N` (implemented
 in v1.7.0) adds adjustable step size: clamped in firmware to compiled
-4–45°/press, RAM only, reverts to default 15°/press on reboot. The
-control panel exposes it as a dropdown (v1.7.1) and shows the value the
+4–45°/press, RAM only, reverts to default 39°/press on reboot. The
+control panel exposes it as a free number field and shows the value the
 firmware actually applied after clamping.
 
 ## Wishlist / backlog
@@ -274,4 +274,3 @@ firmware actually applied after clamping.
   is that the image is current.
 - `/api/glomwifi` (force portal without physical access)
 - ArduinoOTA (flash over wifi — unit will live at my mother's)
-- DEG_PER_PRESS calibration against the ball position

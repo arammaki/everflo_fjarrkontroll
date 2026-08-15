@@ -51,20 +51,22 @@
   #define INGEST_TOKEN ""
 #endif
 
-#define FW_VERSION "1.7.2"
+#define FW_VERSION "1.7.3"
 
 /* ---------------- MOTOR ---------------- */
 #define USE_TMC_UART 0            // 1 = current control + true freewheel over UART
                                   //     (needs TMCStepper library + 1k resistor, see README)
 
 /* ---------------- MOVEMENT ---------------- */
-#define DEG_PER_PRESS   15        // motor shaft degrees per button press.
-                                  // Lego measurement: ~15° ≈ 0.1 L with a coaxial 1:1 coupling.
-                                  // ADJUST after calibrating against the ball!
+#define DEG_PER_PRESS   39        // motor shaft degrees per button press.
+                                  // Calibrated on site against the ball 2026-08-16,
+                                  // replacing the earlier 15° Lego estimate.
 #define DIRECTION       -1        // 1 or -1 when + turns the wrong way
                                   // (-1 since v1.6.2: verified on site)
-#define STEP_DEG_MIN    4         // clamp range for /api/steg: about 25–300 %
-#define STEP_DEG_MAX    45        // of DEG_PER_PRESS (15). RAM only, see stepDegrees.
+#define STEP_DEG_MIN    4         // clamp range for /api/steg. Unchanged since the
+#define STEP_DEG_MAX    45        // default was 15, so the room above the new 39 is
+                                  // small — raise MAX if a coarser step is wanted.
+                                  // RAM only, see stepDegrees.
 #define MICROSTEPS      8         // TMC2209 standalone: MS1=MS2=GND => 1/8
 #define STEP_PAUSE_US   2500      // µs between microsteps (lower = faster)
 
