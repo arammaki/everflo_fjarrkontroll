@@ -249,6 +249,17 @@ control panel exposes it as a dropdown (v1.7.1) and shows the value the
 firmware actually applied after clamping.
 
 ## Wishlist / backlog
+- Share one frame between simultaneous `/bild` viewers. Today every request
+  calls `esp_camera_fb_get()`, so N viewers cost N captures and each sees a
+  different frame. The port 80 httpd runs in a single task and handles
+  requests sequentially, so a cache touched only by `h_snapshot` needs no
+  mutex: a PSRAM buffer plus a timestamp, serving the stored JPEG when it
+  is younger than ~200 ms. Do NOT share that cache with `loop()` or the
+  port 81 stream server — that would need synchronisation across three
+  tasks. Saves capture and JPEG encoding, not bandwidth. Deferred from
+  2026-08-15: nothing is broken, it could not be tested before the visit,
+  and a cache is a deliberately stale frame in a system whose whole point
+  is that the image is current.
 - `/api/glomwifi` (force portal without physical access)
 - ArduinoOTA (flash over wifi — unit will live at my mother's)
 - DEG_PER_PRESS calibration against the ball position
