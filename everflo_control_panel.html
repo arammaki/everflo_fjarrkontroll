@@ -29,8 +29,10 @@
  .hint{font-size:.85rem;color:#666;text-align:center;max-width:480px}
  .steplabel{display:flex;align-items:center;justify-content:center;gap:8px;
             font-size:.95rem;color:#444}
- .steplabel select{flex:0 0 auto;font-size:1rem;padding:8px 10px;
-                   border-radius:10px;border:1px solid #ccc}
+ .steplabel input{flex:0 0 5.5em;font-size:1rem;padding:8px 10px;text-align:center;
+                  border-radius:10px;border:1px solid #ccc}
+ .steplabel button{flex:0 0 auto;padding:9px 16px;font-size:.95rem}
+ #steprange{flex:0 0 auto;font-size:.85rem;color:#666;white-space:nowrap}
 </style></head><body>
 <h1>Bolldetektor (körs i telefonen)</h1>
 <div class="row">
@@ -58,9 +60,10 @@
 </div>
 <div class="row">
   <label class="steplabel">Steg per tryck
-    <select id="step" onchange="setStep()" disabled>
-      <option value="">–</option>
-    </select> grader
+    <input id="step" type="number" inputmode="numeric" step="1" disabled
+           onkeydown="if(event.key==='Enter'){event.preventDefault();setStep()}">
+    <span id="steprange">grader</span>
+    <button id="stepset" onclick="setStep()" disabled>Sätt</button>
   </label>
 </div>
 <div class="row">
@@ -323,38 +326,35 @@ function orient(img,rotation,mirror){
    so unlike the fire-and-forget +/- calls we can read the reply and show
    the value the firmware actually applied after its own clamping. */
 async function loadStep(){
-  const sel=document.getElementById('step');
+  const inp=document.getElementById('step'), btn=document.getElementById('stepset');
   try{
     const j = await (await fetch('http://'+host+'/api/steg')).json();
-    const choices=[4,8,10,15,20,25,30,45].filter(v=>v>=j.min&&v<=j.max);
-    if(!choices.includes(j.steg)) choices.push(j.steg);
-    choices.sort((a,b)=>a-b);
-    sel.innerHTML=choices.map(v=>
-      `<option value="${v}"${v===j.steg?' selected':''}>${v}${v===j.standard?' (standard)':''}</option>`
-    ).join('');
-    sel.disabled=false;
+    inp.min=j.min; inp.max=j.max; inp.value=j.steg;
+    document.getElementById('steprange').textContent=
+      `grader (${j.min}–${j.max}, standard ${j.standard})`;
+    inp.disabled=btn.disabled=false;
   }catch(e){
-    sel.innerHTML='<option value="">–</option>';
-    sel.disabled=true;
+    inp.disabled=btn.disabled=true;
+    document.getElementById('steprange').textContent='grader';
   }
 }
 async function setStep(){
-  const sel=document.getElementById('step');
-  const v=sel.value;
-  if(!v) return;
-  sel.disabled=true;
+  const inp=document.getElementById('step'), btn=document.getElementById('stepset');
+  const asked=inp.value.trim();
+  if(asked==='') return;
+  inp.disabled=btn.disabled=true;
   try{
-    // The reply carries the clamped value, so the menu can never claim a
-    // setting the firmware refused.
-    const j = await (await fetch('http://'+host+'/api/steg?v='+encodeURIComponent(v))).json();
-    await loadStep();
-    if(String(j.steg)!==String(v))
-      document.getElementById('status').textContent=
-        'Enheten begränsade steget till '+j.steg+' grader.';
+    // The firmware clamps to its own compiled range and returns what it
+    // actually applied, so the field can never claim a setting it refused.
+    const j = await (await fetch('http://'+host+'/api/steg?v='+encodeURIComponent(asked))).json();
+    inp.value=j.steg;
+    document.getElementById('status').textContent =
+      String(j.steg)===asked ? 'Steget är nu '+j.steg+' grader per tryck.'
+                             : 'Enheten begränsade '+asked+' till '+j.steg+' grader.';
   }catch(e){
     document.getElementById('status').textContent='Kunde inte ändra stegstorleken.';
-    sel.disabled=false;
   }
+  inp.disabled=btn.disabled=false;
 }
 function start(){
   // Tolerate a pasted full URL, a trailing slash and ?/# – otherwise they end
