@@ -19,7 +19,7 @@ and verify.
 |---|---|
 | MCU | Seeed XIAO ESP32-S3 **Sense** (OV3660 camera, PID 0x3660; OV2640 also supported by PID check) |
 | Driver | TMC2209 clone breakout, standalone/legacy mode (no UART), unmarked — see pin map below |
-| Motor | NEMA 17 pancake (17HE08-1004S), 0.9°... driven 1/8 microstep? — see stegPerTryck() in code; default 15°/press, adjustable via /api/steg |
+| Motor | NEMA 17 pancake (17HE08-1004S), 0.9°... driven 1/8 microstep? — see stepsPerPress() in code; default 15°/press, adjustable via /api/steg |
 | Motor PSU | MB102 breadboard supply, jumper 5V, barrel input **needs 7–12 V** (1117 regulators, ~1 V dropout) |
 | Cup | 3D-printed conical cup on the D-shaft (Ø5.18 bore / flat 4.71), M3 set screw against the flat |
 
@@ -70,7 +70,7 @@ Single sketch `everflo_fjarrkontroll.ino`. Key pieces:
   (wishlist).
 - **`/api/steg`**: GET returns `{"steg":N,"min":4,"max":45,"standard":15}`
   (degrees per press); `?v=N` sets it, clamped to compiled 4..45, RAM only
-  (reboot = compiled default `DEG_PER_TRYCK`). Invalid/negative/empty `v`
+  (reboot = compiled default `DEG_PER_PRESS`). Invalid/negative/empty `v`
   is ignored.
 - **Stream server port 81**: `/stream` MJPEG, viewer-kickout via
   `stream_gen` (newest viewer wins), `lru_purge_enable`, 5 s send/recv
@@ -81,11 +81,11 @@ Single sketch `everflo_fjarrkontroll.ino`. Key pieces:
 - **Camera**: `CAMERA_GRAB_WHEN_EMPTY`; `KAMERA_VFLIP`/`KAMERA_HMIRROR`
   defines exist; display rotation is done in the page CSS
   (`rotate(90deg) scaleX(-1)`), not in the sensor.
-- **Position counter** `lage` persisted via Preferences; survives power
+- **Position counter** `position` persisted via Preferences; survives power
   loss (verified). Informational only since v1.7.0 — MIN_LAGE/MAX_LAGE
   removed (manual knob turns / cup slip made them unreliable; the camera
   is the source of truth).
-- **`RIKTNING -1`** (verified on-site): flips motor direction for both
+- **`DIRECTION -1`** (verified on-site): flips motor direction for both
   buttons; never "fix" direction by swapping button handlers — that inverts
   counter semantics.
 - `FB-OVF` log lines from cam_hal are harmless (frame buffer overflow when
@@ -93,7 +93,17 @@ Single sketch `everflo_fjarrkontroll.ino`. Key pieces:
 
 ## Conventions
 
-- **All Swedish**: identifiers, comments, log messages, UI text. Keep it.
+- **Language split** (since 2026-08-15, was all-Swedish before):
+  - **English**: identifiers, comments, serial/`/log` messages.
+  - **Swedish**: every string the operator or patient reads — the device
+    page, the control panel UI, the `judge()` reason texts. She does not
+    read English. Never translate these.
+  - **Unchanged, in either language**: wire formats. URL paths
+    (`/bild`, `/api/nollstall`, `/api/omstart`, `/api/steg`), JSON field
+    names (`lage`, `steg`), the NVS key `"lage"`, and the localStorage
+    keys (`ev_logg`, `ev_host`, `ev_rot`, `ev_spegel`). Renaming the NVS
+    key loses the stored position; renaming the rest breaks the control
+    panel or the user's saved settings.
 - **Bump `FW_VERSION` on every behavioral change** — the page footer shows
   it, and it is how the user verifies a flash actually took (cache traps).
 - One focused change per commit; commit message style for firmware changes:
@@ -113,10 +123,10 @@ Arduino IDE (or arduino-cli): board **XIAO_ESP32S3**, **PSRAM: OPI PSRAM**
 Preferences, Ticker, ESPmDNS bundled).
 
 Post-flash checklist (serial 115200):
-`=== EverFlo fjarrkontroll v1.7.x startar ===` → `Kamera OK` (PID logged) →
-`Ansluten! IP: ...` → `Streamserver: port 81 OK` → `=== Redo ===`;
+`=== EverFlo remote control v1.7.x starting ===` → `Camera OK` (PID logged) →
+`Connected! IP: ...` → `Stream server: port 81 OK` → `=== Ready ===`;
 LED heartbeat 1 s/4 s; page loads, footer shows the new version; `/bild`
-returns a JPEG; +/− move the motor and `Lage:` logs tick.
+returns a JPEG; +/− move the motor and `Position:` logs tick.
 
 Claude Code can compile-check, but **every change must be flashed and
 verified by the user before it reaches the unit at my mother's** — it will
@@ -136,11 +146,11 @@ analyzes frames in JS, shows flow, drives the knob motor via
 analyzes saved images offline with per-gate diagnostics.
 
 Two shell invariants (both are bug fixes — do not "simplify" them away):
-`sparaBild()` repaints the canvas from the last clean frame before
+`saveImage()` repaints the canvas from the last clean frame before
 export, because the green detection marker is drawn inside the ball
 band and would otherwise be burned into the calibration images. Any
 path that fails to produce a fresh valid reading (lost contact, failed
-analysis) must clear the big number and `senasteFlode` — a stale value
+analysis) must clear the big number and `lastFlow` — a stale value
 left on screen reads as current and would also be logged with a fresh
 timestamp.
 
@@ -161,6 +171,17 @@ lossless and compensated by the UI rotation control instead — never
 change firmware camera settings (resolution, hmirror, vflip, format).
 Data note: the calibration image labeled `0.1L` is actually 1.0 L/min
 (confirmed mislabel).
+
+### The engine exists twice — keep the copies byte-identical
+The detection engine (constants through `judge()`, including the embedded
+`REF_PNG`) is duplicated verbatim in both HTML files. Any edit must be
+applied to both, and verified:
+`diff <(sed -n '/const W=480/,/Inom kalibrerat/p' everflo_kontrollpanel.html) <(sed -n '/const W=480/,/Inom kalibrerat/p' everflo_bilddiagnostik.html)`
+A partial edit is the dangerous case: if `T` is renamed in one file and
+`judge()` still reads the old key, the comparison silently becomes
+`value < undefined` — false — and that quality gate stops rejecting
+anything. Extracting the engine to one shared file removes this whole
+class of bug and is the top backlog item.
 
 ### Engine invariants
 Grayscale -> flatfield (3-pass box blur ~ sigma 41) -> 1D vertical
@@ -199,4 +220,4 @@ control panel does not call it yet.
 - Step size control in `everflo_kontrollpanel.html` via `/api/steg`
 - `/api/glomwifi` (force portal without physical access)
 - ArduinoOTA (flash over wifi — unit will live at my mother's)
-- DEG_PER_TRYCK calibration against the ball position
+- DEG_PER_PRESS calibration against the ball position
