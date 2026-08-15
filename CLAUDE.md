@@ -23,6 +23,18 @@ and verify.
 | Motor PSU | MB102 breadboard supply, jumper 5V, barrel input **needs 7–12 V** (1117 regulators, ~1 V dropout) |
 | Cup | 3D-printed conical cup on the D-shaft (Ø5.18 bore / flat 4.71), M3 set screw against the flat |
 
+### Wifi band (measured on site 2026-08-15)
+The ESP32-S3 is **2.4 GHz only**. Put the viewing phone on **5 GHz**: when
+both ends sit on 2.4 GHz every byte crosses the congested band twice
+(phone → AP, AP → device), and the phone's radio is far worse than the
+AP's. Symptom when they share the band: `/bild` trickles in like an old
+modem, 6–7 s for a 30 kB frame, while a 5 GHz laptop stays fast at the
+same moment. Moving the phone to 5 GHz fixed it outright.
+
+Device-side RSSI is logged with every cloud upload, so the effect of
+moving the unit or its antenna can be measured: press a button to force an
+upload and compare. Seen so far: −55 to −68 dBm.
+
 ### Power architecture (post-mortem law — a XIAO died to teach us this)
 - **Logic**: XIAO powered by its own USB-C. XIAO 3V3 → TMC VDD (logic only).
 - **Motor power**: MB102 5V rail → TMC VM. **NEVER wire VM from the XIAO 5V pin.**
