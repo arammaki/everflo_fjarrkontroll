@@ -74,6 +74,17 @@ Single sketch `everflo_remote_control.ino`. Key pieces:
   120 s portal timeout, restart on failure. `wifiWatchdog()` in `loop()`
   heals runtime drops (3 × 15 s reconnects → `ESP.restart()`).
 - **mDNS**: `syrgas.local`.
+- **Device page** (v1.8.0): picture, the reading, then MINDRE and MER side
+  by side. The reading is computed **in the phone**: the device serves the
+  detection engine at `/motor.js` straight from flash, and the page draws
+  `/bild` into a canvas, orients it the same way the control panel does,
+  and runs `analyze()`/`judge()` once a second. Nothing to transfer to a
+  phone — she just opens `syrgas.local`. The engine is a separate asset on
+  purpose: `h_index` copies the page into a String per request, and ~90 kB
+  of engine would not fit in heap. When the engine refuses, the page shows
+  its Swedish reason instead of a number, and a stale frame clears the
+  number as well as dimming the picture — a number that outlives the frame
+  it came from is the one thing this page must never show.
 - **Device page** (v1.7.4): picture, then MINDRE and MER side by side
   (minus left, plus right). No position counter — it is informational only,
   drifts as soon as the knob is turned by hand, and a number that looks
@@ -207,8 +218,10 @@ earlier sweep and its `0.1L` mislabel no longer apply.
 ### The engine has one source: `balldetector.js`
 Edit the detection engine **only** in `balldetector.js`, then run
 `node build_webui.mjs`. The script inlines it verbatim into both HTML
-pages between the `ENGINE:BEGIN`/`ENGINE:END` markers and verifies the
-two copies came out byte-identical. `node build_webui.mjs --check` exits
+pages between the `ENGINE:BEGIN`/`ENGINE:END` markers, generates
+`balldetector_js.h` for the sketch to serve at `/motor.js`, and verifies
+the two page copies came out byte-identical. The header is generated too,
+so an engine change reaches the device page only after a reflash. `node build_webui.mjs --check` exits
 non-zero when a page is out of date — run it before committing.
 
 Everything between the markers is generated and will be overwritten
