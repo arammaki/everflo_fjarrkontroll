@@ -51,7 +51,7 @@
   #define INGEST_TOKEN ""
 #endif
 
-#define FW_VERSION "1.7.3"
+#define FW_VERSION "1.7.4"
 
 /* ---------------- MOTOR ---------------- */
 #define USE_TMC_UART 0            // 1 = current control + true freewheel over UART
@@ -242,7 +242,10 @@ static const char PAGE[] = R"HTML(
  body{font-family:-apple-system,Helvetica,Arial,sans-serif;margin:0;background:#f4f4f2;
       display:flex;flex-direction:column;align-items:center;gap:14px;padding:12px}
  h1{font-size:1.3rem;margin:6px 0 0;color:#333}
- #camwrap{width:100%;max-width:480px;aspect-ratio:3/4;overflow:hidden;border-radius:12px;
+ /* 90 % rather than full width: shrinks the picture ~10 % in both directions
+    so it and the buttons fit one phone screen. Scaling, not cropping — the
+    scale must stay in view. */
+ #camwrap{width:90%;max-width:432px;aspect-ratio:3/4;overflow:hidden;border-radius:12px;
           background:#000;display:flex;align-items:center;justify-content:center;position:relative}
  #camwrap img{width:133.4%;transform:rotate(90deg) scaleX(-1)}
  #camwrap.stale img{opacity:.3}
@@ -251,9 +254,11 @@ static const char PAGE[] = R"HTML(
         font-size:1.2rem;font-weight:700;line-height:1.35}
  #stale small{display:block;font-size:.9rem;font-weight:400;margin-top:4px}
  #camwrap.stale #stale{display:block}
- .position{font-size:1.6rem;color:#333}
- .position b{font-size:2.2rem}
- button{width:100%;max-width:480px;font-size:2.4rem;padding:26px 0;border:none;
+ /* Side by side: minus left, plus right, matching the direction the ball
+    moves on the scale. */
+ .buttons{display:flex;gap:10px;width:100%;max-width:480px}
+ .buttons button{flex:1}
+ button{font-size:1.9rem;padding:24px 0;border:none;
         border-radius:16px;color:#fff;font-weight:700;cursor:pointer}
  #plus{background:#1c8a4c}
  #minus{background:#4a6fa5}
@@ -264,9 +269,10 @@ static const char PAGE[] = R"HTML(
 <h1>Syrgas – fjärrkontroll</h1>
 <div id="camwrap"><img id="cam" alt="Kamerabild laddas...">
 <div id="stale">Bilden uppdateras inte<small id="staleAge"></small></div></div>
-<div class="position">Läge: <b id="position">–</b></div>
-<button id="plus" onclick="press('plus')">+ MER</button>
+<div class="buttons">
 <button id="minus" onclick="press('minus')">&minus; MINDRE</button>
+<button id="plus" onclick="press('plus')">+ MER</button>
+</div>
 <div id="msg"></div>
 <div class="small"><a href="#" onclick="resetCounter();return false">Nollställ räknare (tekniker)</a> · <a href="#" onclick="restart();return false">Starta om enheten</a> · v%VER%</div>
 <script>
@@ -285,32 +291,29 @@ setInterval(()=>{
     'Senaste bild för '+age+' sekunder sedan. Tryck inte förrän bilden är tillbaka.';
 }, 1000);
 nextFrame();
-async function status(){
-  try{ const j = await (await fetch('/api/status'+q)).json();
-       document.getElementById('position').textContent = j.lage; }catch(e){}
-}
+// No position counter on this page: it is informational only, it drifts as
+// soon as the knob is turned by hand, and a number that looks authoritative
+// next to the picture invites trusting it over the picture.
 async function press(op){
   const b1=document.getElementById('plus'), b2=document.getElementById('minus');
   b1.disabled=b2.disabled=true;
   document.getElementById('msg').textContent='';
   try{
     const j = await (await fetch('/api/'+op+q)).json();
-    document.getElementById('position').textContent = j.lage;
     if(!j.ok) document.getElementById('msg').textContent='Motorn är upptagen – vänta';
   }catch(e){ document.getElementById('msg').textContent='Ingen kontakt'; }
   b1.disabled=b2.disabled=false;
 }
 async function resetCounter(){
   if(!confirm('Nollställa räknaren? (endast vid ominstallation)'))return;
-  const j = await (await fetch('/api/nollstall'+q)).json();
-  document.getElementById('position').textContent=j.lage;
+  await fetch('/api/nollstall'+q);
+  document.getElementById('msg').textContent='Räknaren nollställd.';
 }
 async function restart(){
   if(!confirm('Starta om enheten? Bilden återkommer inom en minut.'))return;
   try{ await fetch('/api/omstart'+q); }catch(e){}
   document.getElementById('msg').textContent='Startar om...';
 }
-status(); setInterval(status,10000);
 </script></body></html>
 )HTML";
 

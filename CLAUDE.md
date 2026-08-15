@@ -74,6 +74,11 @@ Single sketch `everflo_remote_control.ino`. Key pieces:
   120 s portal timeout, restart on failure. `wifiWatchdog()` in `loop()`
   heals runtime drops (3 × 15 s reconnects → `ESP.restart()`).
 - **mDNS**: `syrgas.local`.
+- **Device page** (v1.7.4): picture, then MINDRE and MER side by side
+  (minus left, plus right). No position counter — it is informational only,
+  drifts as soon as the knob is turned by hand, and a number that looks
+  authoritative next to the picture invites trusting it over the picture.
+  The page therefore no longer polls `/api/status` at all.
 - **Web server port 80**: `/` (UI), `/api/plus`, `/api/minus`,
   `/api/nollstall`, `/api/omstart`, `/api/status`, `/api/steg`, `/log`,
   `/bild`. All JSON APIs and `/bild` send `Access-Control-Allow-Origin: *`
