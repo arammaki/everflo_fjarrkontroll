@@ -1,0 +1,36 @@
+{
+  // Admin UI for the EverFlo monitor. Reads what the ingest Worker wrote.
+  //
+  //   npx wrangler deploy
+  //   printf '%s' 'THE-PASSWORD' | npx wrangler secret put ADMIN_PASSWORD
+  //
+  // (printf, not echo — wrangler does not trim stdin.)
+  //
+  // Separate from the ingest Worker on purpose. Ingest must never require
+  // an interactive login, because an ESP32 cannot do one; admin must
+  // always require one. Keeping them apart makes that impossible to
+  // confuse. Swapping this one to Cloudflare Access later touches nothing
+  // else.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "everflo-admin",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-15",
+  "account_id": "86c73d2432665552e5dcab672f0644b3",
+  "observability": { "enabled": true },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "everflo",
+      "database_id": "5597a503-8219-4d30-906e-22bc7534d735"
+    }
+  ],
+
+  "r2_buckets": [
+    {
+      "binding": "IMAGES",
+      "bucket_name": "everflo-images",
+      "jurisdiction": "eu"
+    }
+  ]
+}
