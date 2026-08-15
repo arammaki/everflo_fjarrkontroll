@@ -133,7 +133,7 @@ verified by the user before it reaches the unit at my mother's** — it will
 run unattended there. Remote recovery exists ("Starta om enheten" link /
 `/api/omstart`), USB power-cycle is the manual fallback.
 
-## Web UI (everflo_kontrollpanel.html, everflo_bilddiagnostik.html)
+## Web UI (bolldetektor.js, bygg_webui.mjs, two HTML pages)
 
 Architecture: the firmware serves its own minimal control page
 (camera picture + buttons) at syrgas.local. The HTML files in this
@@ -172,16 +172,25 @@ change firmware camera settings (resolution, hmirror, vflip, format).
 Data note: the calibration image labeled `0.1L` is actually 1.0 L/min
 (confirmed mislabel).
 
-### The engine exists twice — keep the copies byte-identical
-The detection engine (constants through `judge()`, including the embedded
-`REF_PNG`) is duplicated verbatim in both HTML files. Any edit must be
-applied to both, and verified:
-`diff <(sed -n '/const W=480/,/Inom kalibrerat/p' everflo_kontrollpanel.html) <(sed -n '/const W=480/,/Inom kalibrerat/p' everflo_bilddiagnostik.html)`
-A partial edit is the dangerous case: if `T` is renamed in one file and
-`judge()` still reads the old key, the comparison silently becomes
-`value < undefined` — false — and that quality gate stops rejecting
-anything. Extracting the engine to one shared file removes this whole
-class of bug and is the top backlog item.
+### The engine has one source: `bolldetektor.js`
+Edit the detection engine **only** in `bolldetektor.js`, then run
+`node bygg_webui.mjs`. The script inlines it verbatim into both HTML
+pages between the `ENGINE:BEGIN`/`ENGINE:END` markers and verifies the
+two copies came out byte-identical. `node bygg_webui.mjs --check` exits
+non-zero when a page is out of date — run it before committing.
+
+Everything between the markers is generated and will be overwritten
+without warning. Do not hand-edit it.
+
+The pages remain self-contained single files on purpose (the engine and
+the ~100 kB `REF_PNG` are inlined, not linked): they are opened straight
+from the filesystem on a phone, where a relative `<script src>` does not
+load reliably. Duplication is therefore deliberate — but generated.
+
+Why this matters: when the engine was hand-maintained in two places, a
+partial rename left `judge()` reading `T.kontrast` while `T` defined
+`contrast`. The comparison became `value < undefined` — always false —
+and that quality gate silently stopped rejecting anything (2026-08-15).
 
 ### Engine invariants
 Grayscale -> flatfield (3-pass box blur ~ sigma 41) -> 1D vertical
