@@ -11,7 +11,8 @@
 
    Requires macOS `sips` (built in) and nothing else — no npm packages,
    no browser. Files must be named bild_<flow>L_<timestamp>.jpg, where
-   <flow> is the reading or the word "max".
+   <flow> is the reading, optionally followed by "max" for the frame
+   with the knob at its stop, which must read as Max and not as a number.
 
    Two honest limitations:
 
@@ -91,7 +92,7 @@ E.__setREF({
 });
 
 const files = readdirSync(imageDir)
-  .filter((f) => /^bild_([0-9.]+|max)L_.*\.jpe?g$/i.test(f)).sort();
+  .filter((f) => /^bild_([0-9.]+)(?:max)?L_.*\.jpe?g$/i.test(f)).sort();
 if (!files.length) {
   console.error(`No bild_*.jpg found in ${imageDir}`);
   process.exit(2);
@@ -101,13 +102,14 @@ console.log('label   read   diff  | contrast  unamb  match  shift  spread | verd
 let sum = 0, n = 0, worst = 0, failures = 0;
 
 for (const f of files) {
-  const label = f.match(/^bild_([0-9.]+|max)L_/i)[1];
+  const m = f.match(/^bild_([0-9.]+)(max)?L_/i);
+  const label = m[1], isMax = !!m[2];
   const r = E.analyze(readBmp(toBmp(join(imageDir, f), label)));
   const b = E.judge(r);
   const verdict = !b.ok ? 'REJECTED' : b.maxState ? 'Max' : b.bottomState ? 'Below 0.5' : 'ok';
 
   let diff = '';
-  if (label !== 'max') {
+  if (!isMax) {
     if (verdict !== 'ok') { failures++; }
     else {
       const d = r.flow - Number(label);

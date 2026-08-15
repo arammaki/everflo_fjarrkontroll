@@ -192,15 +192,17 @@ breaks. Any new endpoints the pages read need the same headers —
 are fire-and-forget by design.
 
 ### Calibration is baked in — do not regenerate casually
-Both files embed a reference image (median of 21 labeled frames) and a
-quadratic y->flow calibration bound to the exact camera pose and 4:3
+Both files embed a reference image (median of the 27 labeled frames of
+the 2026-08-16 sweep, 8-bit grayscale — the engine converts to gray as its
+first step, so color would only triple the file for data it discards) and
+a quadratic y->flow calibration bound to the exact camera pose and 4:3
 aspect ratio at calibration time. A physical camera move, refocus, or
 aspect change invalidates it: a new labeled sweep ("Spara bild") and
 regenerated constants are required. Rotation/mirror changes are
 lossless and compensated by the UI rotation control instead — never
 change firmware camera settings (resolution, hmirror, vflip, format).
-Data note: the calibration image labeled `0.1L` is actually 1.0 L/min
-(confirmed mislabel).
+The camera was moved and everything regenerated on 2026-08-16; the
+earlier sweep and its `0.1L` mislabel no longer apply.
 
 ### The engine has one source: `balldetector.js`
 Edit the detection engine **only** in `balldetector.js`, then run
@@ -224,29 +226,37 @@ and that quality gate silently stopped rejecting anything (2026-08-15).
 
 ### Engine invariants
 Grayscale -> flatfield (3-pass box blur ~ sigma 41) -> 1D vertical
-registration against scale ticks (anchor band x 415-470) -> clipped
-difference vs reference in ball band (x 295-415) -> smoothed profile ->
+registration against scale ticks (anchor band x 296-320) -> clipped
+difference vs reference in ball band (x 252-292) -> smoothed profile ->
 peak + centroid -> quadratic calibration. Never remove the quality
-gates (registration >=0.75, contrast >=0.045, ambiguity >=1.35x,
-|shift| <=20 px, extent <=135 rows): the engine must say "no reading"
+gates (registration >=0.75, contrast >=0.10, ambiguity >=3.0x,
+|shift| <=20 px, extent <=75 rows): the engine must say "no reading"
 rather than output a plausible wrong number — it reads oxygen flow for
-a patient. States: y<118 -> "Max" (top thick mark, ~5.7 extrapolated);
-y>579 -> "Under 0.5" (ball at rest / flow off).
+a patient. States: y<152 -> "Max" (knob at its stop, ~5.7); y>435
+(Y_CAL_MAX+12) -> "Under 0.4" (ball at rest / flow off).
+
+All of those numbers come from the sweep, not from taste: the bands were
+measured as the columns where the ball actually moves and where the
+printed scale actually is, and each threshold sits well below the worst
+value the 27 labelled frames produced.
 
 ### Testing
-Validated headless (Playwright): 20 labeled images (LOO MAE 0.05, 100%
-within +/-0.2 L/min), a negative suite (garbage frames, occlusions,
+Validated headless (Playwright) against the FIRST sweep: 20 labeled
+images (LOO MAE 0.05), a negative suite (garbage frames, occlusions,
 large shifts, wrong rotation must be REJECTED), and a tolerance suite
-(15 px shift, blur, thin occluder must still read ~correctly). Any
-engine change requires rerunning equivalent tests before deployment.
+(15 px shift, blur, thin occluder must still read ~correctly). That
+suite has NOT been rerun against the 2026-08-16 calibration — the
+negative and tolerance cases are the part `validate_engine.mjs` does not
+cover, and `reg >= 0.75` in particular was chosen by that negative
+suite, not by the sweep.
 
 **In this repo**: `node tools/validate_engine.mjs <dir with bild_*.jpg>`
 runs the real `balldetector.js` against the labelled images and fails
 (non-zero) on any rejection or a reading more than 0.2 L/min off its
 label. No npm packages, no browser — it decodes with macOS `sips`. Run it
-after every engine change. Measured 2026-08-15 after the extraction to
-`balldetector.js`: mean 0.045 L/min, worst 0.133, 20 read, 0 rejected,
-`max` correctly reported as Max.
+after every engine change. Measured 2026-08-16 against the new
+sweep: mean 0.036 L/min, worst 0.113, 26 read, 0 rejected, the frame with
+the knob at its stop correctly reported as Max.
 
 That the sips decoder lands on the labels is also mild evidence that the
 engine tolerates a non-browser JPEG decoder — relevant if the reading is
