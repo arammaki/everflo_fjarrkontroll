@@ -199,8 +199,14 @@ static const char SIDA[] = R"HTML(
       display:flex;flex-direction:column;align-items:center;gap:14px;padding:12px}
  h1{font-size:1.3rem;margin:6px 0 0;color:#333}
  #camwrap{width:100%;max-width:480px;aspect-ratio:3/4;overflow:hidden;border-radius:12px;
-          background:#000;display:flex;align-items:center;justify-content:center}
+          background:#000;display:flex;align-items:center;justify-content:center;position:relative}
  #camwrap img{width:133.4%;transform:rotate(90deg) scaleX(-1)}
+ #camwrap.gammal img{opacity:.3}
+ #gammal{display:none;position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);
+         background:#a33;color:#fff;text-align:center;padding:16px 10px;
+         font-size:1.2rem;font-weight:700;line-height:1.35}
+ #gammal small{display:block;font-size:.9rem;font-weight:400;margin-top:4px}
+ #camwrap.gammal #gammal{display:block}
  .lage{font-size:1.6rem;color:#333}
  .lage b{font-size:2.2rem}
  button{width:100%;max-width:480px;font-size:2.4rem;padding:26px 0;border:none;
@@ -212,7 +218,8 @@ static const char SIDA[] = R"HTML(
  .liten{font-size:.85rem;color:#888;margin-top:18px}
 </style></head><body>
 <h1>Syrgas – fjärrkontroll</h1>
-<div id="camwrap"><img id="cam" alt="Kamerabild laddas..."></div>
+<div id="camwrap"><img id="cam" alt="Kamerabild laddas...">
+<div id="gammal">Bilden uppdateras inte<small id="gammalTid"></small></div></div>
 <div class="lage">Läge: <b id="lage">–</b></div>
 <button id="plus" onclick="tryck('plus')">+ MER</button>
 <button id="minus" onclick="tryck('minus')">&minus; MINDRE</button>
@@ -221,9 +228,18 @@ static const char SIDA[] = R"HTML(
 <script>
 const PIN='%PIN%'; const q = PIN ? ('?pin='+PIN) : '';
 const cam=document.getElementById('cam');
+let senasteBild=Date.now();
 function nastaBild(){ cam.src='/bild?t='+Date.now(); }
-cam.onload  = ()=>setTimeout(nastaBild, 250);   // ~4 bilder/s när nätet hänger med
+cam.onload  = ()=>{ senasteBild=Date.now(); setTimeout(nastaBild, 250); };  // ~4 bilder/s
 cam.onerror = ()=>setTimeout(nastaBild, 1000);  // lugn takt vid fel, självläkande
+// En bild som slutat uppdateras ser likadan ut som en som uppdateras. Utan
+// den här varningen kan man tro sig se läget just nu och trycka i blindo.
+setInterval(()=>{
+  const alder=Math.round((Date.now()-senasteBild)/1000);
+  document.getElementById('camwrap').classList.toggle('gammal', alder>=5);
+  if(alder>=5) document.getElementById('gammalTid').textContent=
+    'Senaste bild för '+alder+' sekunder sedan. Tryck inte förrän bilden är tillbaka.';
+}, 1000);
 nastaBild();
 async function status(){
   try{ const j = await (await fetch('/api/status'+q)).json();
