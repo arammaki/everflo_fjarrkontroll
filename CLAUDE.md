@@ -77,6 +77,12 @@ Single sketch `everflo_remote_control.ino`. Key pieces:
   ~4 Hz, chained via `onload` with 1 s error backoff. Keep it that way:
   Safari+mDNS on port 81 is flaky and a wedged stream must never take down
   the UI.
+- **Stale-image warning** (v1.7.1): the device page dims the picture and
+  covers it with a red banner after 5 s without a fresh frame. The +/−
+  buttons stay enabled on purpose (decided 2026-08-15): locking them would
+  remove the remote control exactly when something is wrong, and the
+  physical knob is at the patient's home, not the operator's. Warn hard,
+  do not lock.
 - **Camera**: `CAMERA_GRAB_WHEN_EMPTY`; `KAMERA_VFLIP`/`KAMERA_HMIRROR`
   defines exist; display rotation is done in the page CSS
   (`rotate(90deg) scaleX(-1)`), not in the sensor.
@@ -216,9 +222,21 @@ within +/-0.2 L/min), a negative suite (garbage frames, occlusions,
 large shifts, wrong rotation must be REJECTED), and a tolerance suite
 (15 px shift, blur, thin occluder must still read ~correctly). Any
 engine change requires rerunning equivalent tests before deployment.
-Note: neither the test suite nor the labeled images are in this repo —
-ask the user for them before touching the engine, and do not treat an
-untested engine edit as verified.
+
+**In this repo**: `node tools/validate_engine.mjs <dir with bild_*.jpg>`
+runs the real `balldetector.js` against the labelled images and fails
+(non-zero) on any rejection or a reading more than 0.2 L/min off its
+label. No npm packages, no browser — it decodes with macOS `sips`. Run it
+after every engine change. Measured 2026-08-15 after the extraction to
+`balldetector.js`: mean 0.045 L/min, worst 0.133, 20 read, 0 rejected,
+`max` correctly reported as Max.
+
+That the sips decoder lands on the labels is also mild evidence that the
+engine tolerates a non-browser JPEG decoder — relevant if the reading is
+ever computed server-side, but not proof the decoders agree everywhere.
+
+The labelled images themselves are not in the repo (they are the user's);
+the Playwright suite that does leave-one-out lives outside it too.
 
 ### Deployment safety
 The system will run live at a patient's home (not yet deployed).
