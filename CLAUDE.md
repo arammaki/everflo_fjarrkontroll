@@ -135,6 +135,15 @@ analyzes frames in JS, shows flow, drives the knob motor via
 (`bild_<flow>L_<timestamp>.jpg`). `everflo_bilddiagnostik.html`
 analyzes saved images offline with per-gate diagnostics.
 
+Two shell invariants (both are bug fixes — do not "simplify" them away):
+`sparaBild()` repaints the canvas from the last clean frame before
+export, because the green detection marker is drawn inside the ball
+band and would otherwise be burned into the calibration images. Any
+path that fails to produce a fresh valid reading (lost contact, failed
+analysis) must clear the big number and `senasteFlode` — a stale value
+left on screen reads as current and would also be logged with a fresh
+timestamp.
+
 CORS is load-bearing: because the pages run from a different origin,
 `/bild` must keep sending CORS headers (Access-Control-Allow-Origin)
 or canvas getImageData is blocked and all flow analysis silently
@@ -170,6 +179,9 @@ within +/-0.2 L/min), a negative suite (garbage frames, occlusions,
 large shifts, wrong rotation must be REJECTED), and a tolerance suite
 (15 px shift, blur, thin occluder must still read ~correctly). Any
 engine change requires rerunning equivalent tests before deployment.
+Note: neither the test suite nor the labeled images are in this repo —
+ask the user for them before touching the engine, and do not treat an
+untested engine edit as verified.
 
 ### Deployment safety
 The system will run live at a patient's home (not yet deployed).

@@ -1,6 +1,6 @@
 <!DOCTYPE html><html lang="sv"><head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Bolldetektor – EverFlo</title>
 <style>
  body{font-family:-apple-system,Helvetica,Arial,sans-serif;margin:0;background:#f4f4f2;
@@ -247,7 +247,7 @@ function bedom(r){
 
 /* ---------- skal: polling, visning, motor, logg (från bolldetektor_3) ---------- */
 const cv=document.getElementById('cv'), ctx=cv.getContext('2d',{willReadFrequently:true});
-let host='', senasteFlode=null, timer=null;
+let host='', senasteFlode=null, timer=null, senasteRam=null, hamtarSedan=0;
 try{
   document.getElementById('logg').value = localStorage.getItem('ev_logg')||'';
   const h=localStorage.getItem('ev_host'); if(h) document.getElementById('host').value=h;
@@ -277,27 +277,50 @@ function orientera(img,rot,spegel){
 }
 
 function start(){
-  host=document.getElementById('host').value.trim();
+  // Tål inklistrad full adress, avslutande snedstreck och ?/# – annars
+  // hamnar de i sökvägen och motoranropen träffar fel (eller ingenting).
+  host=document.getElementById('host').value.trim()
+       .replace(/^https?:\/\//i,'').replace(/[\/?#].*$/,'');
+  document.getElementById('host').value=host;
   try{localStorage.setItem('ev_host',host);}catch(e){}
   if(timer) clearInterval(timer);
+  hamtarSedan=0;
   timer=setInterval(hamta, 1000);
   hamta();
 }
+/* Ingen bild = ingen giltig avläsning. Siffran måste rensas, annars står
+   ett gammalt värde kvar och ser aktuellt ut när enheten tappat kontakten. */
+function tappadKontakt(){
+  senasteFlode=null;
+  const fl=document.getElementById('flode');
+  fl.parentElement.className='stor fel';
+  fl.textContent='Ingen kontakt';
+  document.getElementById('enhet').textContent='';
+  document.getElementById('kvalitet').textContent='';
+  document.getElementById('status').textContent=
+    'Ingen kontakt med '+host+' – siffran ovan är inte aktuell.';
+}
 function hamta(){
+  const nu=Date.now();
+  if(hamtarSedan && nu-hamtarSedan<5000) return;   // en bild i taget, släpp efter 5 s
+  hamtarSedan=nu;
   const img=new Image();
   img.crossOrigin='anonymous';
   img.onload=()=>{
+    hamtarSedan=0;
     const rot=parseInt(document.getElementById('rot').value,10);
     const spegel=document.getElementById('spegel').checked;
     const t=orientera(img,rot,spegel);
+    senasteRam=t;
     ctx.setTransform(1,0,0,1,0,0);
     ctx.drawImage(t,0,0,480,640);
     korFrame();
   };
-  img.onerror=()=>{ document.getElementById('status').textContent='Ingen kontakt med '+host; };
-  img.src='http://'+host+'/bild?t='+Date.now();
+  img.onerror=()=>{ hamtarSedan=0; tappadKontakt(); };
+  img.src='http://'+host+'/bild?t='+nu;
 }
 function korFrame(){
+  if(!REF){ document.getElementById('status').textContent='Referensbilden är inte inläst än.'; return; }
   const r=analysera(ctx.getImageData(0,0,480,640));
   const b=bedom(r);
   uppdatera(r,b);
@@ -355,12 +378,30 @@ async function motor(op){
   if(!host){ document.getElementById('status').textContent='Tryck Starta först'; return; }
   const b1=document.getElementById('bplus'), b2=document.getElementById('bminus');
   b1.disabled=b2.disabled=true;
-  try{ await fetch('http://'+host+'/api/'+op, {mode:'no-cors'}); }catch(e){}
-  setTimeout(()=>{ b1.disabled=b2.disabled=false; }, 700);
+  // Utan tidsgräns låser sig båda knapparna tills webbläsaren ger upp om
+  // enheten svartnar (inget RST). 4 s räcker väl för ett lokalt anrop.
+  const ac=new AbortController();
+  const tm=setTimeout(()=>ac.abort(), 4000);
+  try{
+    await fetch('http://'+host+'/api/'+op, {mode:'no-cors', signal:ac.signal});
+  }catch(e){
+    // Avbrott = vi vet inte om det hann fram; nätfel = det gjorde det inte.
+    // Påstå aldrig det starkare av de två – ratten kan ha rört sig.
+    document.getElementById('status').textContent = e.name==='AbortError'
+      ? 'Enheten svarade inte i tid – osäkert om kommandot gick fram. Kontrollera bilden.'
+      : 'Kommandot nådde inte enheten – kontrollera bilden innan du trycker igen.';
+  }finally{
+    clearTimeout(tm);
+    setTimeout(()=>{ b1.disabled=b2.disabled=false; }, 700);
+  }
 }
 function sparaBild(){
   const f=(document.getElementById('facit').value||'okant').trim().replace(',','.');
   const tid=new Date().toISOString().replace(/:/g,'-').slice(0,19);
+  // Rita om rutan utan detektionsmarkeringen. Ringen och linjen ligger mitt i
+  // bollbandet (x 295-415) och skulle annars brännas in i facitbilden och
+  // förorena kalibreringsdatat. Markeringen kommer tillbaka nästa bildruta.
+  if(senasteRam){ ctx.setTransform(1,0,0,1,0,0); ctx.drawImage(senasteRam,0,0,480,640); }
   cv.toBlob(b=>{
     const a=document.createElement('a');
     a.href=URL.createObjectURL(b);

@@ -358,6 +358,12 @@ function visa(r){
 function kor(src){
   const im=new Image(); im.crossOrigin="anonymous";
   im.onload=()=>{
+    if(!REF){
+      document.getElementById('val').className="value none";
+      document.getElementById('val').textContent="Referensbilden inte klar";
+      document.getElementById('note').textContent="Vänta någon sekund och försök igen.";
+      return;
+    }
     const c=document.createElement('canvas'); c.width=W; c.height=H;
     const x=c.getContext('2d',{willReadFrequently:true});
     x.drawImage(im,0,0,W,H);
