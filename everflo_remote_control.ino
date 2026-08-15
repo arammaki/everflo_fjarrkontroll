@@ -414,6 +414,16 @@ void startWebServer() {
   httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
   cfg.server_port = 80;
   cfg.max_uri_handlers = 10;
+  // Several people may watch at once — /bild is a plain one-shot request
+  // with no viewer kickout, so they all get frames. The default is to
+  // REFUSE a new connection once the 7 sockets are taken, which would
+  // shut out whoever connects last. Purging the least recently used one
+  // instead costs an evicted viewer a single frame: both pages re-request
+  // continuously and heal on the next tick.
+  cfg.lru_purge_enable = true;
+  // max_open_sockets is deliberately left at 7. Raising it eats into the
+  // same LWIP socket pool the outbound TLS connections for the health ping
+  // and the image upload need.
   if (httpd_start(&ctrl_httpd, &cfg) == ESP_OK) {
     httpd_uri_t u;   // URL paths keep their Swedish names – the control panel depends on them
     u = {.uri="/",              .method=HTTP_GET, .handler=h_index,   .user_ctx=NULL}; httpd_register_uri_handler(ctrl_httpd,&u);
