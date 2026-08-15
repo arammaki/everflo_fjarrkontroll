@@ -133,7 +133,7 @@ verified by the user before it reaches the unit at my mother's** — it will
 run unattended there. Remote recovery exists ("Starta om enheten" link /
 `/api/omstart`), USB power-cycle is the manual fallback.
 
-## Web UI (bolldetektor.js, bygg_webui.mjs, two HTML pages)
+## Web UI (balldetector.js, build_webui.mjs, two HTML pages)
 
 Architecture: the firmware serves its own minimal control page
 (camera picture + buttons) at syrgas.local. The HTML files in this
@@ -172,11 +172,11 @@ change firmware camera settings (resolution, hmirror, vflip, format).
 Data note: the calibration image labeled `0.1L` is actually 1.0 L/min
 (confirmed mislabel).
 
-### The engine has one source: `bolldetektor.js`
-Edit the detection engine **only** in `bolldetektor.js`, then run
-`node bygg_webui.mjs`. The script inlines it verbatim into both HTML
+### The engine has one source: `balldetector.js`
+Edit the detection engine **only** in `balldetector.js`, then run
+`node build_webui.mjs`. The script inlines it verbatim into both HTML
 pages between the `ENGINE:BEGIN`/`ENGINE:END` markers and verifies the
-two copies came out byte-identical. `node bygg_webui.mjs --check` exits
+two copies came out byte-identical. `node build_webui.mjs --check` exits
 non-zero when a page is out of date — run it before committing.
 
 Everything between the markers is generated and will be overwritten

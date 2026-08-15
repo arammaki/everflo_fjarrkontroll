@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 /* ============================================================
-   Inlines bolldetektor.js into the two companion HTML pages.
+   Inlines balldetector.js into the two companion HTML pages.
 
-       node bygg_webui.mjs           write the pages
-       node bygg_webui.mjs --check   verify only, exit 1 if out of date
+       node build_webui.mjs           write the pages
+       node build_webui.mjs --check   verify only, exit 1 if out of date
 
    The pages must stay self-contained single files: they are opened
    straight from the filesystem on a phone, where a relative
    <script src> does not load reliably. So the engine is duplicated
    into them on purpose — but generated, never hand-maintained.
 
-   Edit the engine in bolldetektor.js. Everything between the markers
+   Edit the engine in balldetector.js. Everything between the markers
    in the HTML files is overwritten without warning.
    ============================================================ */
 
@@ -19,10 +19,10 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const SOURCE = 'bolldetektor.js';
+const SOURCE = 'balldetector.js';
 const TARGETS = ['everflo_kontrollpanel.html', 'everflo_bilddiagnostik.html'];
 
-const BEGIN = '/* === ENGINE:BEGIN — generated from bolldetektor.js, do not edit here === */';
+const BEGIN = '/* === ENGINE:BEGIN — generated from balldetector.js, do not edit here === */';
 const END = '/* === ENGINE:END === */';
 
 const check = process.argv.includes('--check');
@@ -47,7 +47,7 @@ for (const name of TARGETS) {
   }
   stale++;
   if (check) {
-    console.error(`${name}: OUT OF DATE — run: node bygg_webui.mjs`);
+    console.error(`${name}: OUT OF DATE — run: node build_webui.mjs`);
     continue;
   }
   writeFileSync(path, wanted);

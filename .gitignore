@@ -5,3 +5,9 @@ build/
 /everflo_fjarrkontroll.iml
 
 /.claude/
+
+# Cloudflare / Node
+.wrangler/
+node_modules/
+.dev.vars
+.env

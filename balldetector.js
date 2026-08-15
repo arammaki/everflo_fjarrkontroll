@@ -5,7 +5,7 @@
    everflo_bilddiagnostik.html between the ENGINE:BEGIN/ENGINE:END
    markers. Edit here, never in the HTML copies, then run:
 
-       node bygg_webui.mjs
+       node build_webui.mjs
 
    The HTML pages stay self-contained single files on purpose: they are
    opened straight from the filesystem on a phone, where relative
