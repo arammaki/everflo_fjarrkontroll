@@ -44,8 +44,14 @@
 #ifndef HEALTHCHECK_URL
   #define HEALTHCHECK_URL ""      // empty = health ping disabled
 #endif
+#ifndef INGEST_URL
+  #define INGEST_URL ""           // empty = cloud upload disabled
+#endif
+#ifndef INGEST_TOKEN
+  #define INGEST_TOKEN ""
+#endif
 
-#define FW_VERSION "1.7.0"
+#define FW_VERSION "1.7.1"
 
 /* ---------------- MOTOR ---------------- */
 #define USE_TMC_UART 0            // 1 = current control + true freewheel over UART
@@ -153,6 +159,12 @@ void motorStep(int direction) {
   }
 }
 
+/* Set by move(), read by loop(): upload one frame once a press series has
+   gone quiet. What we wait for is the end of the series, not the ball —
+   it settles in well under a second. */
+volatile unsigned long lastPressAt = 0;
+volatile bool uploadAfterPress = false;
+
 /* Move + store position (the counter is information, not a limit) */
 bool move(int direction) {
   if (busy) return false;
@@ -164,6 +176,8 @@ bool move(int direction) {
   position = next;
   prefs.putInt("lage", position);           // NVS key kept: renaming loses the stored position
   logLine(String("Position: ") + position);
+  lastPressAt = millis();
+  uploadAfterPress = true;
   busy = false;
   return true;
 }
@@ -479,6 +493,59 @@ void pingHealth() {
 }
 
 /* ============================================================
+ *  CLOUD UPLOAD
+ *  One frame to the ingest Worker, which stores the image in R2 and a row
+ *  in D1. Fire and forget: a failed upload is not retried and not
+ *  buffered. A gap in the log IS the record that the device or the network
+ *  was down, and buffering would only make a stale image look current.
+ *  The reading itself is not computed here — the camera image is the
+ *  record until an analysis path is validated against the labelled set.
+ * ============================================================ */
+#define UPLOAD_INTERVAL_MS 900000UL   // 15 min
+#define PRESS_SETTLE_MS      5000UL   // quiet time that ends a press series
+unsigned long lastUpload = 0;
+
+/* Blocks for a few seconds. Same reasoning as pingHealth(): the web server
+   has its own task, so only the heartbeat pauses. */
+bool uploadFrame(const char *reason) {
+  if (strlen(INGEST_URL) == 0) return false;
+  camera_fb_t *fb = esp_camera_fb_get();
+  if (!fb) return false;
+
+  String url = String(INGEST_URL) + "?reason=" + reason +
+               "&position=" + position +
+               "&steg=" + stepDegrees +
+               "&uptime=" + (millis() / 1000) +
+               "&rssi=" + WiFi.RSSI() +
+               "&fw=" FW_VERSION;
+
+  WiFiClientSecure client;
+  client.setInsecure();               // see pingHealth() for why
+  HTTPClient http;
+  bool ok = false;
+  if (http.begin(client, url)) {
+    http.setConnectTimeout(5000);
+    http.setTimeout(15000);           // 30 kB over TLS on a weak link
+    http.addHeader("authorization", "Bearer " INGEST_TOKEN);
+    http.addHeader("content-type", "image/jpeg");
+    int code = http.POST(fb->buf, fb->len);
+    ok = (code == 204);
+    // Rate-limited for the same reason as the ping: a sustained outage
+    // would otherwise flush the 40-line ring and take the wifi lines that
+    // explain the outage with it.
+    static unsigned long lastFailLog = 0;
+    if (!ok && (lastFailLog == 0 || millis() - lastFailLog > 3600000UL)) {
+      lastFailLog = millis();
+      logLine(String("Upload ") + reason + ": HTTP " + code +
+              ", heap " + ESP.getFreeHeap());
+    }
+    http.end();
+  }
+  esp_camera_fb_return(fb);
+  return ok;
+}
+
+/* ============================================================
  *  SELF-HEALING WIFI (runtime)
  *  The boot path is healed by WiFiManager; this covers a network
  *  lost AFTER a successful start: 3 reconnect attempts 15 s apart,
@@ -550,20 +617,38 @@ void setup() {
   startWebServer();
   Serial.println("Web page: port 80, stream: port 81");
   logLine(strlen(HEALTHCHECK_URL) ? "Health ping: on, every 5 min"
-                                  : "Health ping: off (no secrets.h)");
+                                  : "Health ping: off (not configured)");
+  logLine(strlen(INGEST_URL) ? "Cloud upload: on, every 15 min and after presses"
+                             : "Cloud upload: off (not configured)");
   logLine("=== Ready ===");
 
   lastPing = millis();
-  if (cameraDelivers()) pingHealth();   // boot ping shortens the outage gap
+  lastUpload = millis();
+  if (cameraDelivers()) {
+    pingHealth();                       // boot ping shortens the outage gap
+    uploadFrame("boot");                // and one frame of "this is how it looked"
+  }
 }
 
 void loop() {
   wifiWatchdog();
 
-  if (!busy && WiFi.status() == WL_CONNECTED &&
-      millis() - lastPing > PING_INTERVAL_MS) {
+  bool online = !busy && WiFi.status() == WL_CONNECTED;
+
+  if (online && millis() - lastPing > PING_INTERVAL_MS) {
     lastPing = millis();                 // reset first: a failed camera must
     if (cameraDelivers()) pingHealth();  // retry in 5 min, not spin
+  }
+
+  // A finished press series wins over the periodic slot: it is the frame
+  // that shows what the adjustment actually did.
+  if (online && uploadAfterPress && millis() - lastPressAt > PRESS_SETTLE_MS) {
+    uploadAfterPress = false;
+    lastUpload = millis();
+    uploadFrame("press");
+  } else if (online && millis() - lastUpload > UPLOAD_INTERVAL_MS) {
+    lastUpload = millis();
+    uploadFrame("periodic");
   }
 
   static bool on = false;
