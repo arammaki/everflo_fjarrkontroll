@@ -59,15 +59,14 @@ position 8 = the potentiometer/gold-hole end:
 
 Single sketch `everflo_remote_control.ino`. Key pieces:
 - **WiFiManager**: portal SSID "Syrgas-setup", 15 s × 3 connect attempts,
-  120 s portal timeout, restart on failure. `wifiVakt()` in `loop()` heals
-  runtime drops (3 × 15 s reconnects → `ESP.restart()`).
+  120 s portal timeout, restart on failure. `wifiWatchdog()` in `loop()`
+  heals runtime drops (3 × 15 s reconnects → `ESP.restart()`).
 - **mDNS**: `syrgas.local`.
 - **Web server port 80**: `/` (UI), `/api/plus`, `/api/minus`,
   `/api/nollstall`, `/api/omstart`, `/api/status`, `/api/steg`, `/log`,
-  `/bild`. `/bild` and `/api/steg` send `Access-Control-Allow-Origin: *`
-  (the companion `everflo_control_panel.html` depends on this — see Web
-  UI section). Other JSON APIs currently do NOT send CORS headers
-  (wishlist).
+  `/bild`. All JSON APIs and `/bild` send `Access-Control-Allow-Origin: *`
+  (since v1.7.1) — the companion `everflo_control_panel.html` runs from a
+  different origin and depends on it. See the Web UI section.
 - **`/api/steg`**: GET returns `{"steg":N,"min":4,"max":45,"standard":15}`
   (degrees per press); `?v=N` sets it, clamped to compiled 4..45, RAM only
   (reboot = compiled default `DEG_PER_PRESS`). Invalid/negative/empty `v`
@@ -116,7 +115,7 @@ Single sketch `everflo_remote_control.ino`. Key pieces:
   it, and it is how the user verifies a flash actually took (cache traps).
 - One focused change per commit; commit message style for firmware changes:
   `v1.7.x: kort beskrivning`. No wholesale refactors.
-- `loop()` must stay non-blocking (heartbeat + wifiVakt + button debounce
+- `loop()` must stay non-blocking (heartbeat + wifiWatchdog + button debounce
   live there). No `delay()` in handlers beyond the existing brief ones.
 - Backward compatibility: `/bild`, `/api/plus`, `/api/minus` are consumed
   by the companion `everflo_control_panel.html` (fire-and-forget no-cors)
@@ -228,13 +227,10 @@ previous firmware as fallback. Current UI needs only `/bild` +
 `/api/plus|minus` (stable since v1.6.6). `/api/steg?v=N` (implemented
 in v1.7.0) adds adjustable step size: clamped in firmware to compiled
 4–45°/press, RAM only, reverts to default 15°/press on reboot. The
-control panel does not call it yet.
+control panel exposes it as a dropdown (v1.7.1) and shows the value the
+firmware actually applied after clamping.
 
 ## Wishlist / backlog
-- CORS headers on the remaining JSON APIs (`/api/plus|minus|status|nollstall`)
-  — would give `everflo_control_panel.html` readable responses; `/api/steg`
-  already has them (v1.7.0)
-- Step size control in `everflo_control_panel.html` via `/api/steg`
 - `/api/glomwifi` (force portal without physical access)
 - ArduinoOTA (flash over wifi — unit will live at my mother's)
 - DEG_PER_PRESS calibration against the ball position

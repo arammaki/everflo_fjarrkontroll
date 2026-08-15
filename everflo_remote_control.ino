@@ -316,6 +316,12 @@ esp_err_t sendJson(httpd_req_t *req, bool ok) {
   snprintf(b, sizeof(b), "{\"ok\":%s,\"lage\":%d}",   // JSON field kept: the page reads it
            ok ? "true" : "false", position);
   httpd_resp_set_type(req, "application/json");
+  // CORS on every JSON API, not just /api/steg. The control panel runs from
+  // a different origin and today fires the motor calls no-cors, which makes
+  // a 403 or a wrong host indistinguishable from success. With this header
+  // it can read the reply and tell whether the press actually landed — and
+  // that page can be changed from anywhere, while this firmware cannot.
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
   return httpd_resp_send(req, b, HTTPD_RESP_USE_STRLEN);
 }
 
