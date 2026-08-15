@@ -1,0 +1,34 @@
+{
+  // Ingest Worker for the EverFlo monitor.
+  //
+  //   npx wrangler dev            run locally against simulated D1/R2
+  //   npx wrangler deploy         deploy
+  //   npx wrangler secret put INGEST_TOKEN
+  //
+  // account_id is pinned on purpose: without it Wrangler may pick the first
+  // account it finds, and this account must never be the employer's one.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "everflo-ingest",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-15",
+  "account_id": "86c73d2432665552e5dcab672f0644b3",
+  "observability": { "enabled": true },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "everflo",
+      "database_id": "5597a503-8219-4d30-906e-22bc7534d735"
+    }
+  ],
+
+  // Jurisdiction eu is enforced, not a hint: this is health data about a
+  // person living in the EU. It cannot be changed after bucket creation.
+  "r2_buckets": [
+    {
+      "binding": "IMAGES",
+      "bucket_name": "everflo-images",
+      "jurisdiction": "eu"
+    }
+  ]
+}
