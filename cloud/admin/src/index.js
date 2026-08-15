@@ -6,11 +6,15 @@
    the device, so the worst a bug here can do is show something wrong,
    not change anything.
 
-   HTTP Basic auth against a Worker secret. Chosen over Cloudflare Access
-   because Access needs Zero Trust onboarding in the dashboard, while this
-   is fifteen lines with no session or cookie handling to get wrong. Over
-   HTTPS the credentials are inside the TLS tunnel. Swapping to Access
-   later means deleting requireAuth() and enabling it on the Worker.
+   Guarded by Cloudflare Access (enabled on the Worker 2026-08-15, policy:
+   members of this Cloudflare account). Access authenticates before the
+   request reaches this code, so there is no password here to get wrong.
+
+   The header check below is not authentication — Access already did that.
+   It is a fail-closed guard: if Access is ever removed from this Worker,
+   the page refuses to serve rather than silently becoming public. Someone
+   who can reach the Worker with Access disabled could forge the header,
+   so it protects against accident, not against an attacker.
 
    The page deliberately does NOT compute a flow reading. The detection
    engine is calibrated on browser-decoded pixels and validated by a test
@@ -22,31 +26,13 @@
 
 const PAGE_SIZE = 60;
 
-function timingSafeEqual(a, b) {
-  if (typeof a !== 'string' || a.length !== b.length) return false;
-  const x = new TextEncoder().encode(a);
-  const y = new TextEncoder().encode(b);
-  let diff = 0;
-  for (let i = 0; i < x.length; i++) diff |= x[i] ^ y[i];
-  return diff === 0;
-}
-
-function requireAuth(request, env) {
-  const unauthorized = new Response('Inloggning krävs', {
-    status: 401,
-    headers: { 'www-authenticate': 'Basic realm="EverFlo", charset="UTF-8"' },
-  });
-  if (!env.ADMIN_PASSWORD) return unauthorized;   // unset means closed, not open
-  const header = request.headers.get('authorization') || '';
-  if (!header.startsWith('Basic ')) return unauthorized;
-  let decoded;
-  try {
-    decoded = atob(header.slice(6));
-  } catch {
-    return unauthorized;
-  }
-  const password = decoded.slice(decoded.indexOf(':') + 1);
-  return timingSafeEqual(password, env.ADMIN_PASSWORD) ? null : unauthorized;
+function requireAccess(request) {
+  if (request.headers.get('cf-access-jwt-assertion')) return null;
+  return new Response(
+    'Den här sidan ska skyddas av Cloudflare Access, men anropet kom fram utan ' +
+    'Access-identitet. Sidan visas inte förrän det är utrett.',
+    { status: 403, headers: { 'content-type': 'text/plain; charset=utf-8' } }
+  );
 }
 
 const escapeHtml = (s) =>
@@ -124,7 +110,7 @@ den visar vad enheten skickat och när.</p>
 
 export default {
   async fetch(request, env) {
-    const denied = requireAuth(request, env);
+    const denied = requireAccess(request);
     if (denied) return denied;
 
     const url = new URL(request.url);

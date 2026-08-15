@@ -463,8 +463,8 @@ bool cameraDelivers() {
 
 /* Blocks for the TLS handshake (1-3 s). That is fine here: the web server
    runs in its own task, so only the heartbeat LED pauses. */
-void pingHealth() {
-  if (strlen(HEALTHCHECK_URL) == 0) return;
+bool pingHealth() {
+  if (strlen(HEALTHCHECK_URL) == 0) return false;
   WiFiClientSecure client;
   client.setInsecure();             // no cert pinning. The ping carries no
                                     // secret, and a man in the middle can only
@@ -473,7 +473,7 @@ void pingHealth() {
   HTTPClient http;
   if (!http.begin(client, HEALTHCHECK_URL)) {
     logLine("Ping: begin failed");
-    return;
+    return false;
   }
   // Timeouts set on HTTPClient only: Client::setTimeout has meant seconds in
   // some core versions and milliseconds in others, and getting it wrong the
@@ -490,6 +490,7 @@ void pingHealth() {
     lastFailLog = millis();
     logLine(String("Ping: HTTP ") + code + ", heap " + ESP.getFreeHeap());
   }
+  return code == 200;
 }
 
 /* ============================================================
@@ -624,9 +625,17 @@ void setup() {
 
   lastPing = millis();
   lastUpload = millis();
+  // The result of the first attempt is logged even on success. Everything
+  // after this only logs failures, but on a first boot at the installation
+  // site /log is the only way to see that the cloud path actually works —
+  // absence of errors is not the same as proof it went through.
   if (cameraDelivers()) {
-    pingHealth();                       // boot ping shortens the outage gap
-    uploadFrame("boot");                // and one frame of "this is how it looked"
+    bool ping = pingHealth();           // boot ping shortens the outage gap
+    bool up = uploadFrame("boot");      // and one frame of "this is how it looked"
+    if (strlen(HEALTHCHECK_URL)) logLine(ping ? "Boot ping: OK" : "Boot ping: FAILED");
+    if (strlen(INGEST_URL))      logLine(up   ? "Boot upload: OK" : "Boot upload: FAILED");
+  } else {
+    logLine("Boot: camera gave no frame, skipped ping and upload");
   }
 }
 

@@ -2,15 +2,17 @@
   // Admin UI for the EverFlo monitor. Reads what the ingest Worker wrote.
   //
   //   npx wrangler deploy
-  //   printf '%s' 'THE-PASSWORD' | npx wrangler secret put ADMIN_PASSWORD
   //
-  // (printf, not echo — wrangler does not trim stdin.)
+  // No secrets on this Worker: Cloudflare Access guards it, enabled on the
+  // Worker itself (Settings -> Domains & Routes) with a "Cloudflare
+  // account" policy, so only members of this account get through. Access
+  // works on workers.dev since 2026-08-14; no custom domain needed.
   //
   // Separate from the ingest Worker on purpose. Ingest must never require
   // an interactive login, because an ESP32 cannot do one; admin must
   // always require one. Keeping them apart makes that impossible to
-  // confuse. Swapping this one to Cloudflare Access later touches nothing
-  // else.
+  // confuse — and it is why Access must never be enabled on the ingest
+  // Worker, which would break the device silently.
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "everflo-admin",
   "main": "src/index.js",
