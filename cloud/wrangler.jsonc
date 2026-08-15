@@ -3,7 +3,13 @@
   //
   //   npx wrangler dev            run locally against simulated D1/R2
   //   npx wrangler deploy         deploy
-  //   npx wrangler secret put INGEST_TOKEN
+  //   npx wrangler d1 execute everflo --file schema.sql --remote
+  //
+  // Setting the token, note the printf: `wrangler secret put` does not trim
+  // stdin, so piping with echo stores a trailing newline and every request
+  // then fails the comparison with 403 while looking correct.
+  //
+  //   printf '%s' 'THE-TOKEN' | npx wrangler secret put INGEST_TOKEN
   //
   // account_id is pinned on purpose: without it Wrangler may pick the first
   // account it finds, and this account must never be the employer's one.
