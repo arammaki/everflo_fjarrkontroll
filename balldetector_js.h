@@ -292,12 +292,12 @@ function judge(r){
             reason:"Kameran har flyttat sig för mycket ("+r.dx.toFixed(0)+" px i sidled, "+
                    r.dy.toFixed(0)+" px i höjd). Rikta om den eller gör om kalibreringen."};
   if(r.y < Y_MAX_STATE)
-    return {ok:true, maxState:true, title:null,
+    return {ok:true, maxState:true, title:null, label:"Max",
             reason:"Bollen står vid eller ovanför det övre tjocka strecket — flödet är över skalans sista siffra."};
   if(r.y > Y_CAL_MAX+12)
-    return {ok:true, bottomState:true, title:null,
+    return {ok:true, bottomState:true, title:null, label:"Under 0,3",
             reason:"Bollen ligger vid eller nära botten — flödet är under 0,3 L/min eller avstängt."};
-  if(r.y < Y_CAL_MIN-12 || r.y > Y_CAL_MAX+12)
+  if(r.y < Y_CAL_MIN-2 || r.y > Y_CAL_MAX+2)
     return {ok:true, extrapolated:true, title:null,
             reason:"Bollen står utanför det kalibrerade området — värdet är extrapolerat och mindre tillförlitligt."};
   return {ok:true, extrapolated:false, title:null,

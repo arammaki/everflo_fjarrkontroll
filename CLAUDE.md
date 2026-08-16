@@ -67,7 +67,7 @@ position 8 = the potentiometer/gold-hole end:
 4. EN idles HIGH (motor free) — that IS the manual override; never hold the
    motor energized outside an actual movement.
 
-## Firmware architecture (v1.7.0)
+## Firmware architecture (v1.9.0)
 
 Single sketch `everflo_remote_control.ino`. Key pieces:
 - **WiFiManager**: portal SSID "Syrgas-setup", 15 s × 3 connect attempts,
@@ -103,8 +103,8 @@ Single sketch `everflo_remote_control.ino`. Key pieces:
   `/bild`. All JSON APIs and `/bild` send `Access-Control-Allow-Origin: *`
   (since v1.7.1) — the companion `everflo_control_panel.html` runs from a
   different origin and depends on it. See the Web UI section.
-- **`/api/steg`**: GET returns `{"steg":N,"min":4,"max":45,"standard":39}`
-  (degrees per press); `?v=N` sets it, clamped to compiled 4..45, RAM only
+- **`/api/steg`**: GET returns `{"steg":N,"min":4,"max":180,"standard":39}`
+  (degrees per press); `?v=N` sets it, clamped to compiled 4..180, RAM only
   (reboot = compiled default `DEG_PER_PRESS`). Invalid/negative/empty `v`
   is ignored.
 - **Stream server port 81**: `/stream` MJPEG, viewer-kickout via

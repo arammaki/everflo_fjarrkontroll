@@ -323,7 +323,10 @@ static const char PAGE[] = R"HTML(
 const PIN='%PIN%'; const q = PIN ? ('?pin='+PIN) : '';
 const cv=document.getElementById('cv'), ctx=cv.getContext('2d',{willReadFrequently:true});
 let lastFrameAt=Date.now(), lastAnalysis=0, refReady=false;
-loadRef().then(()=>{refReady=true});
+loadRef().then(()=>{refReady=true})
+  .catch(()=>{ show('Ingen avläsning','','none');
+    document.getElementById('msg').textContent=
+      'Referensbilden kunde inte läsas in. Bilden visas, men inget värde kan beräknas.'; });
 
 // Same transform the control panel uses; the calibration is bound to it.
 function orient(img){
@@ -353,11 +356,12 @@ function frame(img){
   lastAnalysis=Date.now();
   let r,b;
   try{ r=analyze(ctx.getImageData(0,0,480,640)); b=judge(r); }
-  catch(e){ show('Ingen avläsning','','none'); return; }
+  catch(e){ show('Ingen avläsning','','none');
+             document.getElementById('msg').textContent=''; return; }
   if(!b.ok){ show(b.title,'','none'); document.getElementById('msg').textContent=b.reason; return; }
   document.getElementById('msg').textContent='';
-  if(b.maxState) show('Max','över skalans slut','warn');
-  else if(b.bottomState) show('Under 0,4','L/min','warn');
+  if(b.maxState) show(b.label,'över skalans slut','warn');
+  else if(b.bottomState) show(b.label,'L/min','warn');
   else show(r.flow.toFixed(1),'L/min'+(b.extrapolated?' (osäkert)':''));
 }
 // A frame that stopped updating looks exactly like a live one. Without this
@@ -369,6 +373,7 @@ setInterval(()=>{
     document.getElementById('staleAge').textContent=
       'Senaste bild för '+age+' sekunder sedan. Tryck inte förrän bilden är tillbaka.';
     show('–','L/min','none');   // never leave a stale number looking current
+    document.getElementById('msg').textContent='';
   }
 }, 1000);
 nextFrame();

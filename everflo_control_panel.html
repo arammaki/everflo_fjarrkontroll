@@ -80,7 +80,7 @@
     <label>Skift <input id="bDx" type="number" step="1" placeholder="auto"
            inputmode="numeric"> px</label>
     <label>Lutning <input id="bTilt" type="number" step="0.1" placeholder="auto"
-           inputmode="decimal"> grader</label>
+           inputmode="decimal"> graders avvikelse</label>
   </div>
   <p class="hint" id="bandhint" style="text-align:left"></p>
 </details>
@@ -396,12 +396,12 @@ function judge(r){
             reason:"Kameran har flyttat sig för mycket ("+r.dx.toFixed(0)+" px i sidled, "+
                    r.dy.toFixed(0)+" px i höjd). Rikta om den eller gör om kalibreringen."};
   if(r.y < Y_MAX_STATE)
-    return {ok:true, maxState:true, title:null,
+    return {ok:true, maxState:true, title:null, label:"Max",
             reason:"Bollen står vid eller ovanför det övre tjocka strecket — flödet är över skalans sista siffra."};
   if(r.y > Y_CAL_MAX+12)
-    return {ok:true, bottomState:true, title:null,
+    return {ok:true, bottomState:true, title:null, label:"Under 0,3",
             reason:"Bollen ligger vid eller nära botten — flödet är under 0,3 L/min eller avstängt."};
-  if(r.y < Y_CAL_MIN-12 || r.y > Y_CAL_MAX+12)
+  if(r.y < Y_CAL_MIN-2 || r.y > Y_CAL_MAX+2)
     return {ok:true, extrapolated:true, title:null,
             reason:"Bollen står utanför det kalibrerade området — värdet är extrapolerat och mindre tillförlitligt."};
   return {ok:true, extrapolated:false, title:null,
@@ -500,12 +500,14 @@ function update(r,b){
     big.classList.add('error'); fl.textContent=b.title;
     st.textContent=b.reason + (r.reg<T.reg?' Kontrollera även rotationsinställningen ovan.':'');
   }else if(b.bottomState){
-    lastFlow='under0.5';
-    fl.textContent='Under 0,5'; en.textContent='L/min — bollen i botten';
+    // Label comes from judge(): the threshold was hardcoded in three pages and
+    // had drifted to three different numbers (0,3 / 0,4 / 0,5) by 2026-08-16.
+    lastFlow=b.label;
+    fl.textContent=b.label; en.textContent='L/min — bollen i botten';
     big.classList.add('error'); st.textContent=b.reason;
   }else if(b.maxState){
-    lastFlow='max';
-    fl.textContent='Max'; en.textContent='över övre strecket';
+    lastFlow=b.label;
+    fl.textContent=b.label; en.textContent='över övre strecket';
     big.classList.add('warn'); st.textContent=b.reason;
   }else{
     lastFlow=r.flow.toFixed(2);
@@ -605,7 +607,10 @@ function overrides(){
 }
 function drawBands(r){
   if(!document.getElementById('bands').open) return;
-  const dx=r?r.dx:0, t=r?r.tilt:0;
+  // r.tilt is the deviation from BASE_TILT, so the absolute shear the engine
+  // used is the sum. Drawing the deviation alone put the boxes a degree off
+  // the band actually sampled — which defeats the whole point of drawing them.
+  const dx=r?r.dx:0, t=BASE_TILT+(r?r.tilt:0);
   // Draw where the engine actually samples: the base band shifted by the
   // measured dx and sheared by the measured tilt. If these boxes do not sit
   // on the tube, that is exactly why there is no reading.
