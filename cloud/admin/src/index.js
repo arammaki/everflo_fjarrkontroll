@@ -10,10 +10,16 @@
    destroy the record the reading was derived from. That boundary is
    deliberate; keep it.
 
-   A frame has one reading PER ENGINE, not one reading. The row written when
-   a frame is first analysed stays as "what it read at the time"; recomputing
-   later with a recalibrated engine adds a row beside it. Both questions —
-   what did it say then, what would it say now — stay answerable.
+   A frame has one reading PER ENGINE, not one reading. Recomputing later with
+   a recalibrated engine adds a row beside the old one rather than replacing
+   it, so "what did engine A say about this frame" stays answerable forever.
+
+   What the page CANNOT tell you is what the patient's phone showed when the
+   frame arrived. Nothing records which engine was live then: `readings.fw` is
+   the firmware version, and the engine is bundled into a firmware build but
+   never reported separately. So the older column is labelled "Tidigare motor",
+   not "då" — it means an earlier engine looked at this frame, which is only
+   the same thing as history if someone analysed it back then.
 
    Guarded by Cloudflare Access (enabled on the Worker 2026-08-15, policy:
    members of this Cloudflare account). Access authenticates before the
@@ -104,8 +110,9 @@ function renderPage(rows, now) {
     const daText = label(r.flow_da, r.state_da);
     const nuText = label(r.flow_nu, r.state_nu);
     // Only interesting when a recalibration actually changed the answer.
-    const changed = r.state_da && r.state_nu && r.engine_da !== ENGINE_VERSION
-                    && daText !== nuText;
+    // engine_da is a different engine by construction, so a difference here is
+    // always a recalibration changing the answer for an unchanged picture.
+    const changed = r.state_da && r.state_nu && daText !== nuText;
     return `<tr tabindex="-1" data-i="${i}" data-id="${r.id}"
       data-key="${escapeHtml(r.image_key || '')}"
       data-nu="${r.state_nu ? '1' : ''}"
@@ -121,6 +128,7 @@ function renderPage(rows, now) {
           title="${r.engine_da ? 'Motor ' + escapeHtml(r.engine_da) : ''}"
           >${escapeHtml(daText)}</td>
       <td class="avl nu ${r.state_nu ? (good(r.state_nu) ? 'good' : 'bad') : ''} ${changed ? 'andrad' : ''}"
+          title="${changed ? 'Ändrat: motor ' + escapeHtml(r.engine_da) + ' gav ' + escapeHtml(daText) : ''}"
           >${escapeHtml(nuText)}</td>
     </tr>`;
   }).join('');
@@ -196,16 +204,16 @@ ${banner}
   <span class="liten" id="progress"></span>
 </div>
 <p class="liten">Klicka på en rad eller stega med piltangenterna. Avläsningen räknas ut
-här i webbläsaren av samma motor som telefonen kör (<code>${ENGINE_VERSION}</code>) och
-sparas per motorversion. <em>Avläst då</em> är vad den motor som först såg bildrutan gav;
-<em>Avläst nu</em> är vad dagens motor ger. Gul understrykning betyder att en omkalibrering
-ändrat svaret för en bild som inte ändrats.</p>
+här i webbläsaren av motorn <code>${ENGINE_VERSION}</code> och sparas per motorversion.
+<em>Tidigare motor</em> är tom tills en annan motorversion analyserat samma bild — den
+visar inte vad enheten läste när bilden kom in, för det vet sidan inte. Gul understrykning
+betyder att en omkalibrering ändrat svaret för en bild som inte ändrats.</p>
 
 <div class="wrap">
 <table>
 <thead><tr><th>Tid (UTC)</th><th>Orsak</th><th>Vridning</th><th>RSSI</th>
-<th title="Värdet från den motor som först analyserade bildrutan">Avläst då</th>
-<th title="Värdet från motorn som körs nu">Avläst nu</th></tr></thead>
+<th title="Äldsta värdet från en ANNAN motorversion. Tomt om bara en motor sett bilden.">Tidigare motor</th>
+<th title="Värdet från motorn som körs nu">Avläst</th></tr></thead>
 <tbody id="rows">
 ${list}
 </tbody>
@@ -273,9 +281,15 @@ async function analyse(tr,{draw}={}){
 function paint(tr,v){
   const td=tr.querySelector('.avl.nu');
   td.textContent=v.txt; td.className='avl nu '+v.cls;
+  /* Never write into the earlier column. It holds what a DIFFERENT engine
+     said, and this engine analysing a frame for the first time is not that —
+     filling it in would manufacture a comparison that never happened. */
   const da=tr.querySelector('.avl.da');
-  if(da.textContent==='·'){ da.textContent=v.txt; da.className='avl da '+v.cls; }
-  else if(da.textContent!==v.txt) td.classList.add('andrad');
+  const before=da.textContent.trim();
+  if(before!=='·' && before!==v.txt){
+    td.classList.add('andrad');
+    td.title='Ändrat: en tidigare motor gav '+before;   // the marker is a colour otherwise
+  }
   tr.dataset.nu='1';
 }
 /* Saved in batches: 200 rows would otherwise be 200 round trips. */
@@ -472,9 +486,10 @@ export default {
 
     if (url.pathname !== '/') return new Response('not found', { status: 404 });
 
-    /* Two readings per row: the one this engine gives, and the oldest one on
-       record. When they differ, a recalibration changed the answer for a frame
-       that never changed — which is worth seeing. */
+    /* Two readings per row: what this engine says, and the earliest reading
+       from some OTHER engine. The `engine <> ?1` matters — without it a frame
+       analysed once fills both columns with the same number, which reads as
+       "it said this then and says this now" when nothing was ever compared. */
     const { results } = await env.DB.prepare(
       `SELECT r.id, r.received_at, r.reason, r.image_key,
               r.position, r.press_degrees, r.rssi, r.fw,
@@ -482,8 +497,9 @@ export default {
               f.flow AS flow_da, f.state AS state_da, f.engine AS engine_da
          FROM readings r
          LEFT JOIN analyses n ON n.reading_id = r.id AND n.engine = ?1
-         LEFT JOIN analyses f ON f.reading_id = r.id AND f.analysed_at =
-              (SELECT MIN(analysed_at) FROM analyses WHERE reading_id = r.id)
+         LEFT JOIN analyses f ON f.reading_id = r.id AND f.engine <> ?1
+              AND f.analysed_at = (SELECT MIN(analysed_at) FROM analyses
+                                    WHERE reading_id = r.id AND engine <> ?1)
         ORDER BY r.received_at DESC LIMIT ?2`
     ).bind(ENGINE_VERSION, PAGE_SIZE).all();
 
