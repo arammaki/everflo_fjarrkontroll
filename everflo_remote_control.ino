@@ -52,7 +52,7 @@
   #define INGEST_TOKEN ""
 #endif
 
-#define FW_VERSION "1.8.1"
+#define FW_VERSION "1.8.2"
 
 /* ---------------- MOTOR ---------------- */
 #define USE_TMC_UART 0            // 1 = current control + true freewheel over UART
@@ -277,10 +277,17 @@ static const char PAGE[] = R"HTML(
         font-size:1.1rem;font-weight:700;line-height:1.35}
  #stale small{display:block;font-size:.85rem;font-weight:400;margin-top:4px}
  #camwrap.stale #stale{display:block}
- .buttons{display:flex;gap:10px;width:100%;max-width:480px}
- .buttons button{flex:1}
- button{font-size:1.9rem;padding:24px 0;border:none;
+ /* Three step sizes across, plus over minus. The symbol says how big the
+    step is, so there is nothing to read. */
+ .buttons{display:flex;flex-direction:column;gap:10px;width:100%;max-width:480px}
+ .buttons .row{display:flex;gap:10px;width:100%}
+ /* flex-basis 0 so all three are equal no matter how many symbols they
+    carry, and min-width 0 so the symbols cannot push a column wider. */
+ .buttons button{flex:1 1 0;min-width:0}
+ button{font-size:2rem;padding:22px 0;border:none;letter-spacing:.08em;
         border-radius:16px;color:#fff;font-weight:700;cursor:pointer}
+ .plus{background:#1c8a4c}
+ .minus{background:#b3382c}
  button:disabled{opacity:.45}
  #msg{min-height:1.3em;font-size:1rem;color:#a33;text-align:center;max-width:480px}
  .small{font-size:.85rem;color:#888;margin-top:12px;text-align:center}
