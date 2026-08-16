@@ -71,11 +71,16 @@ function renderPage(rows, now) {
     const link = r.image_key
       ? `<a href="/image/${encodeURI(r.image_key)}">bild</a>`
       : '—';
+    // Signed, so the direction of the turn reads at a glance.
+    const turn = r.press_degrees == null ? '—'
+      : `<span class="${r.press_degrees > 0 ? 'up' : 'down'}">` +
+        `${r.press_degrees > 0 ? '+' : ''}${r.press_degrees}°</span>`;
     return `<tr>
       <td>${escapeHtml(r.received_at.replace('T', ' ').slice(0, 19))}</td>
       <td>${escapeHtml(r.reason)}</td>
-      <td>${r.position ?? '—'}</td>
-      <td>${r.rssi ?? '—'}</td>
+      <td class="num">${turn}</td>
+      <td class="num">${r.position ?? '—'}</td>
+      <td class="num">${r.rssi ?? '—'}</td>
       <td>${escapeHtml(r.fw ?? '—')}</td>
       <td>${link}</td>
     </tr>`;
@@ -100,7 +105,7 @@ function renderPage(rows, now) {
 ${banner}
 ${img}
 <table>
-<tr><th>Tid (UTC)</th><th>Orsak</th><th>Läge</th><th>RSSI</th><th>Version</th><th></th></tr>
+<tr><th>Tid (UTC)</th><th>Orsak</th><th>Vridning</th><th>Läge</th><th>RSSI</th><th>Version</th><th></th></tr>
 ${list}
 </table>
 <p class="liten">Bilden är facit. Den här sidan räknar inte ut något flöde —
@@ -131,7 +136,8 @@ export default {
     if (url.pathname !== '/') return new Response('not found', { status: 404 });
 
     const { results } = await env.DB.prepare(
-      `SELECT received_at, reason, image_key, flow, state, position, rssi, fw
+      `SELECT received_at, reason, image_key, flow, state,
+              position, press_degrees, rssi, fw
          FROM readings ORDER BY received_at DESC LIMIT ?`
     ).bind(PAGE_SIZE).all();
 

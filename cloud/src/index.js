@@ -38,7 +38,8 @@ function authorized(request, env) {
   return tokenMatches(header.slice(prefix.length), env.INGEST_TOKEN);
 }
 
-/** Integer query param, or null when absent or malformed. */
+/** Integer query param, or null when absent or malformed. Signed: the press
+    turn arrives as -80 or +39. */
 function intParam(url, name) {
   const raw = url.searchParams.get(name);
   if (raw === null || raw.trim() === '') return null;
@@ -96,14 +97,15 @@ export default {
     await env.DB.prepare(
       `INSERT INTO readings
          (received_at, reason, image_key, flow, state,
-          position, step_degrees, uptime_s, rssi, fw)
-       VALUES (?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?)`
+          position, step_degrees, press_degrees, uptime_s, rssi, fw)
+       VALUES (?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?)`
     ).bind(
       now.toISOString(),
       reason,
       key,
       intParam(url, 'position'),
       intParam(url, 'steg'),
+      intParam(url, 'tryck'),   // signed, only sent for a press
       intParam(url, 'uptime'),
       intParam(url, 'rssi'),
       (url.searchParams.get('fw') || '').slice(0, 32) || null

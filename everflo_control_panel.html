@@ -27,6 +27,13 @@
  .row>*{flex:1}
  textarea{width:100%;max-width:480px;height:110px;font-family:monospace;font-size:.8rem}
  .hint{font-size:.85rem;color:#666;text-align:center;max-width:480px}
+ .steps input{text-align:center;font-size:1rem}
+ .mplus{background:#1c8a4c} .mminus{background:#4a6fa5}
+ .mplus,.mminus{font-size:1.6rem;letter-spacing:.06em}
+ #bands{width:100%;max-width:480px;font-size:.9rem}
+ #bands summary{cursor:pointer;color:#4a6fa5;padding:6px 0}
+ #bands label{display:flex;align-items:center;gap:6px;font-size:.85rem;color:#555}
+ #bands label input{width:100%;min-width:0;text-align:center}
  .steplabel{display:flex;align-items:center;justify-content:center;gap:8px;
             font-size:.95rem;color:#444}
  .steplabel input{flex:0 0 5.5em;font-size:1rem;padding:8px 10px;text-align:center;
@@ -54,10 +61,34 @@
 <div id="wrap"><canvas id="cv" width="480" height="640"></canvas></div>
 <div class="big"><span id="flow">–</span> <small id="unit">L/min</small></div>
 <div id="quality"></div>
-<div class="row">
-  <button id="bplus" style="background:#1c8a4c" onclick="motor('plus')">+ MER</button>
-  <button id="bminus" onclick="motor('minus')">&minus; MINDRE</button>
+<div class="row steps">
+  <input id="d1" type="number" value="20" inputmode="numeric">
+  <input id="d2" type="number" value="39" inputmode="numeric">
+  <input id="d3" type="number" value="80" inputmode="numeric">
 </div>
+<div class="row">
+  <button class="mplus" onclick="motor('plus',1)">+</button>
+  <button class="mplus" onclick="motor('plus',2)">++</button>
+  <button class="mplus" onclick="motor('plus',3)">+++</button>
+</div>
+<div class="row">
+  <button class="mminus" onclick="motor('minus',1)">&minus;</button>
+  <button class="mminus" onclick="motor('minus',2)">&minus;&minus;</button>
+  <button class="mminus" onclick="motor('minus',3)">&minus;&minus;&minus;</button>
+</div>
+<details id="bands">
+  <summary>Analysband</summary>
+  <p class="hint" style="text-align:left">Rutorna visar var motorn läser. Grön = bollbandet,
+  blå = ankarbandet för registrering. Ändra tills de sitter rätt på röret och för in
+  värdena i <code>balldetector.js</code>.</p>
+  <div class="row">
+    <label>XL <input id="bXL" type="number" inputmode="numeric"></label>
+    <label>XR <input id="bXR" type="number" inputmode="numeric"></label>
+    <label>AX1 <input id="bAX1" type="number" inputmode="numeric"></label>
+    <label>AX2 <input id="bAX2" type="number" inputmode="numeric"></label>
+  </div>
+  <p class="hint" id="bandhint" style="text-align:left"></p>
+</details>
 <div class="row">
   <label class="steplabel">Steg per tryck
     <input id="step" type="number" inputmode="numeric" step="1" disabled
@@ -432,6 +463,7 @@ function runFrame(){
   const r=analyze(ctx.getImageData(0,0,480,640));
   const b=judge(r);
   update(r,b);
+  drawBands(r);
 }
 function update(r,b){
   const fl=document.getElementById('flow'), en=document.getElementById('unit'),
@@ -482,16 +514,24 @@ function saveFile(){
   const a=document.createElement('a');
   a.href=URL.createObjectURL(b); a.download='everflo_dataset.csv'; a.click();
 }
-async function motor(op){
+/* The step size travels with the press as ?steg=N, so no set-then-press
+   round trip and no way for two phones to race into the wrong size. */
+const stepFor=n=>{
+  const v=parseInt(document.getElementById('d'+n).value,10);
+  return Number.isFinite(v)&&v>0 ? v : null;
+};
+async function motor(op,n){
   if(!host){ document.getElementById('status').textContent='Tryck Starta först'; return; }
-  const b1=document.getElementById('bplus'), b2=document.getElementById('bminus');
-  b1.disabled=b2.disabled=true;
-  // Without a timeout both buttons stay locked until the browser gives up when
+  const deg=stepFor(n);
+  if(deg===null){ document.getElementById('status').textContent='Ogiltig stegstorlek.'; return; }
+  const bs=document.querySelectorAll('.mplus,.mminus');
+  bs.forEach(b=>b.disabled=true);
+  // Without a timeout both rows stay locked until the browser gives up when
   // the device goes dark (no RST). 4 s is plenty for a call on the local net.
   const ac=new AbortController();
   const tm=setTimeout(()=>ac.abort(), 4000);
   try{
-    await fetch('http://'+host+'/api/'+op, {mode:'no-cors', signal:ac.signal});
+    await fetch('http://'+host+'/api/'+op+'?steg='+deg, {mode:'no-cors', signal:ac.signal});
   }catch(e){
     // Abort = we do not know whether it arrived; network error = it did not.
     // Never claim the stronger of the two – the knob may have moved.
@@ -500,8 +540,40 @@ async function motor(op){
       : 'Kommandot nådde inte enheten – kontrollera bilden innan du trycker igen.';
   }finally{
     clearTimeout(tm);
-    setTimeout(()=>{ b1.disabled=b2.disabled=false; }, 700);
+    setTimeout(()=>{ bs.forEach(b=>b.disabled=false); }, 700);
   }
+}
+/* Band overlay. Purely a visual aid: the engine reads the bands compiled
+   into balldetector.js, so these boxes are for finding the numbers to put
+   there after the camera has moved — not a live override. */
+const BAND_KEYS=['bXL','bXR','bAX1','bAX2'];
+const bandDefaults={bXL:XL,bXR:XR,bAX1:AX1,bAX2:AX2};
+function initBands(){
+  for(const k of BAND_KEYS){
+    const el=document.getElementById(k);
+    let v=null;
+    try{ v=localStorage.getItem('ev_'+k); }catch(e){}
+    el.value = v!==null ? v : bandDefaults[k];
+    el.onchange=()=>{ try{ localStorage.setItem('ev_'+k, el.value); }catch(e){} };
+  }
+}
+const bandVal=k=>{const v=parseInt(document.getElementById(k).value,10);
+  return Number.isFinite(v)?v:bandDefaults[k];};
+function drawBands(r){
+  if(!document.getElementById('bands').open) return;
+  ctx.lineWidth=2;
+  ctx.strokeStyle='#00e676';
+  ctx.strokeRect(bandVal('bXL'),YTOP,bandVal('bXR')-bandVal('bXL'),YBOT-YTOP);
+  ctx.strokeStyle='#4aa3ff';
+  ctx.strokeRect(bandVal('bAX1'),YTOP,bandVal('bAX2')-bandVal('bAX1'),YBOT-YTOP);
+  // What the engine measured, and where the bands would have to move to
+  // follow it. Copy those into balldetector.js if the shift is permanent.
+  const h=document.getElementById('bandhint');
+  h.textContent = r
+    ? `Uppmätt skift: ${r.dx.toFixed(1)} px i sidled, ${r.dy.toFixed(1)} i höjd. `+
+      `Följer man skiftet blir banden XL=${Math.round(XL+r.dx)}, XR=${Math.round(XR+r.dx)}, `+
+      `AX1=${Math.round(AX1+r.dx)}, AX2=${Math.round(AX2+r.dx)}.`
+    : '';
 }
 function saveImage(){
   const f=(document.getElementById('label').value||'okant').trim().replace(',','.');
@@ -520,5 +592,6 @@ function saveImage(){
 }
 function copyLog(){ navigator.clipboard.writeText(document.getElementById('log').value); }
 
+initBands();
 loadRef();
 </script></body></html>

@@ -52,7 +52,7 @@
   #define INGEST_TOKEN ""
 #endif
 
-#define FW_VERSION "1.8.0"
+#define FW_VERSION "1.8.1"
 
 /* ---------------- MOTOR ---------------- */
 #define USE_TMC_UART 0            // 1 = current control + true freewheel over UART
@@ -64,12 +64,14 @@
                                   // replacing the earlier 15° Lego estimate.
 #define DIRECTION       -1        // 1 or -1 when + turns the wrong way
                                   // (-1 since v1.6.2: verified on site)
-#define STEP_DEG_MIN    4         // clamp range for /api/steg. Unchanged since the
-#define STEP_DEG_MAX    45        // default was 15, so the room above the new 39 is
-                                  // small — raise MAX if a coarser step is wanted.
-                                  // RAM only, see stepDegrees.
+#define STEP_DEG_MIN    4         // clamp range for a press, whether it comes from
+#define STEP_DEG_MAX    90        // /api/steg or ?steg=N on a press. 90 is a quarter
+                                  // turn — deliberate ceiling on how far one press
+                                  // can move the knob before anyone can react.
 #define MICROSTEPS      8         // TMC2209 standalone: MS1=MS2=GND => 1/8
-#define STEP_PAUSE_US   2500      // µs between microsteps (lower = faster)
+#define STEP_PAUSE_US   2500      // µs between microsteps at cruise (lower = faster)
+#define STEP_RAMP_US    3000      // extra µs at the very start and end of a move
+#define STEP_RAMP_MAX   60        // microsteps spent easing in, and again easing out
 
 /* ---------------- SECURITY ---------------- */
 #define WEB_PIN ""                // e.g. "4711" => requires ?pin=4711 on API calls.
@@ -134,8 +136,14 @@ void logLine(const String &s) {
 /* ============================================================
  *  MOTOR
  * ============================================================ */
-int stepsPerPress() {             // microsteps per press
-  return (int)(stepDegrees / (1.8f / MICROSTEPS) + 0.5f);
+int stepsFor(int degrees) {       // microsteps for a given angle
+  return (int)(degrees / (1.8f / MICROSTEPS) + 0.5f);
+}
+/* Bigger steps run slower. A large jump moves the ball far, and a slower
+   sweep gives the eye time to follow it — and shakes the rig less. */
+int stepPauseFor(int degrees) {
+  if (degrees <= DEG_PER_PRESS) return STEP_PAUSE_US;
+  return STEP_PAUSE_US + (degrees - DEG_PER_PRESS) * 30;
 }
 void motorInit() {
   pinMode(PIN_STEP, OUTPUT);
@@ -153,12 +161,22 @@ void motorInit() {
 }
 void motorEngage()  { digitalWrite(PIN_EN, LOW);  delay(30); }
 void motorRelease() { digitalWrite(PIN_EN, HIGH); }         // freewheel
-void motorStep(int direction) {
+/* Trapezoidal ramp: ease in over the first steps, ease out over the last.
+   A hard start and stop jolts the whole rig — including the camera bolted
+   next to it, which slid 34 px on 2026-08-16 during a session of pressing. */
+void motorStep(int direction, int degrees) {
   digitalWrite(PIN_DIR, (direction * DIRECTION) > 0 ? HIGH : LOW);
-  int n = stepsPerPress();
+  const int n = stepsFor(degrees);
+  const int cruise = stepPauseFor(degrees);
+  const int ramp = min(n / 3, STEP_RAMP_MAX);
   for (int i = 0; i < n; i++) {
+    int extra = 0;
+    if (ramp > 0) {
+      if (i < ramp)            extra = STEP_RAMP_US * (ramp - i) / ramp;
+      else if (i >= n - ramp)  extra = STEP_RAMP_US * (i - (n - ramp) + 1) / ramp;
+    }
     digitalWrite(PIN_STEP, HIGH); delayMicroseconds(4);
-    digitalWrite(PIN_STEP, LOW);  delayMicroseconds(STEP_PAUSE_US);
+    digitalWrite(PIN_STEP, LOW);  delayMicroseconds(cruise + extra);
   }
 }
 
@@ -167,18 +185,21 @@ void motorStep(int direction) {
    it settles in well under a second. */
 volatile unsigned long lastPressAt = 0;
 volatile bool uploadAfterPress = false;
+volatile int lastPressDegrees = 0;   // signed: what the knob was actually turned
 
 /* Move + store position (the counter is information, not a limit) */
-bool move(int direction) {
+bool move(int direction, int degrees) {
   if (busy) return false;
   int next = position + direction;
   busy = true;
   motorEngage();
-  motorStep(direction);
+  motorStep(direction, degrees);
   motorRelease();
   position = next;
   prefs.putInt("lage", position);           // NVS key kept: renaming loses the stored position
-  logLine(String("Position: ") + position);
+  lastPressDegrees = direction * degrees;
+  logLine(String("Press ") + (lastPressDegrees > 0 ? "+" : "") + lastPressDegrees +
+          " deg, position " + position);
   lastPressAt = millis();
   uploadAfterPress = true;
   busy = false;
@@ -260,8 +281,6 @@ static const char PAGE[] = R"HTML(
  .buttons button{flex:1}
  button{font-size:1.9rem;padding:24px 0;border:none;
         border-radius:16px;color:#fff;font-weight:700;cursor:pointer}
- #plus{background:#1c8a4c}
- #minus{background:#4a6fa5}
  button:disabled{opacity:.45}
  #msg{min-height:1.3em;font-size:1rem;color:#a33;text-align:center;max-width:480px}
  .small{font-size:.85rem;color:#888;margin-top:12px;text-align:center}
@@ -271,8 +290,16 @@ static const char PAGE[] = R"HTML(
 <div id="stale">Bilden uppdateras inte<small id="staleAge"></small></div></div>
 <div id="flow">–<small> L/min</small></div>
 <div class="buttons">
-<button id="minus" onclick="press('minus')">&minus; MINDRE</button>
-<button id="plus" onclick="press('plus')">+ MER</button>
+<div class="row">
+<button class="plus" onclick="press('plus',20)">+</button>
+<button class="plus" onclick="press('plus',39)">++</button>
+<button class="plus" onclick="press('plus',80)">+++</button>
+</div>
+<div class="row">
+<button class="minus" onclick="press('minus',20)">&minus;</button>
+<button class="minus" onclick="press('minus',39)">&minus;&minus;</button>
+<button class="minus" onclick="press('minus',80)">&minus;&minus;&minus;</button>
+</div>
 </div>
 <div id="msg"></div>
 <div class="small"><a href="#" onclick="resetCounter();return false">Nollställ räknare (tekniker)</a> · <a href="#" onclick="restart();return false">Starta om enheten</a> · v%VER%</div>
@@ -330,15 +357,15 @@ setInterval(()=>{
   }
 }, 1000);
 nextFrame();
-async function press(op){
-  const b1=document.getElementById('plus'), b2=document.getElementById('minus');
-  b1.disabled=b2.disabled=true;
+const allButtons=()=>document.querySelectorAll('.buttons button');
+async function press(op,deg){
+  allButtons().forEach(b=>b.disabled=true);
   document.getElementById('msg').textContent='';
   try{
-    const j = await (await fetch('/api/'+op+q)).json();
+    const j = await (await fetch('/api/'+op+(q?q+'&':'?')+'steg='+deg)).json();
     if(!j.ok) document.getElementById('msg').textContent='Motorn är upptagen – vänta';
   }catch(e){ document.getElementById('msg').textContent='Ingen kontakt'; }
-  b1.disabled=b2.disabled=false;
+  allButtons().forEach(b=>b.disabled=false);
 }
 async function resetCounter(){
   if(!confirm('Nollställa räknaren? (endast vid ominstallation)'))return;
@@ -382,8 +409,25 @@ esp_err_t h_index(httpd_req_t *req) {
   httpd_resp_set_type(req, "text/html; charset=utf-8");
   return httpd_resp_send(req, s.c_str(), s.length());
 }
-esp_err_t h_plus(httpd_req_t *req)  { if(!pinOK(req)) return httpd_resp_send_err(req,HTTPD_403_FORBIDDEN,"pin"); return sendJson(req, move(+1)); }
-esp_err_t h_minus(httpd_req_t *req) { if(!pinOK(req)) return httpd_resp_send_err(req,HTTPD_403_FORBIDDEN,"pin"); return sendJson(req, move(-1)); }
+/* Optional ?steg=N on a press: use that angle for this press only, clamped,
+   without disturbing the standing default. One request instead of set-then-
+   press, so two phones cannot race each other into the wrong step size. */
+int pressDegrees(httpd_req_t *req) {
+  char buf[96]; char val[16] = "";
+  if (httpd_req_get_url_query_str(req, buf, sizeof(buf)) == ESP_OK &&
+      httpd_query_key_value(buf, "steg", val, sizeof(val)) == ESP_OK) {
+    char *end = NULL;
+    long v = strtol(val, &end, 10);
+    if (end != val && *end == '\0' && v > 0) {
+      if (v < STEP_DEG_MIN) v = STEP_DEG_MIN;
+      if (v > STEP_DEG_MAX) v = STEP_DEG_MAX;
+      return (int)v;
+    }
+  }
+  return stepDegrees;
+}
+esp_err_t h_plus(httpd_req_t *req)  { if(!pinOK(req)) return httpd_resp_send_err(req,HTTPD_403_FORBIDDEN,"pin"); return sendJson(req, move(+1, pressDegrees(req))); }
+esp_err_t h_minus(httpd_req_t *req) { if(!pinOK(req)) return httpd_resp_send_err(req,HTTPD_403_FORBIDDEN,"pin"); return sendJson(req, move(-1, pressDegrees(req))); }
 esp_err_t h_reset(httpd_req_t *req) { if(!pinOK(req)) return httpd_resp_send_err(req,HTTPD_403_FORBIDDEN,"pin"); position=0; prefs.putInt("lage",0); return sendJson(req,true); }
 esp_err_t h_status(httpd_req_t *req){ return sendJson(req, true); }
 esp_err_t h_restart(httpd_req_t *req){
@@ -603,6 +647,8 @@ bool uploadFrame(const char *reason) {
                "&uptime=" + (millis() / 1000) +
                "&rssi=" + WiFi.RSSI() +
                "&fw=" FW_VERSION;
+  // The turn that caused this frame, signed. Only meaningful for a press.
+  if (strcmp(reason, "press") == 0) url += String("&tryck=") + lastPressDegrees;
 
   WiFiClientSecure client;
   client.setInsecure();               // see pingHealth() for why

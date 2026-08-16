@@ -20,8 +20,10 @@ CREATE TABLE IF NOT EXISTS readings (
   state        TEXT,               -- 'ok' | 'max' | 'below' | 'no-reading'
 
   -- Device-reported context. Informational: the camera image is the truth.
-  position     INTEGER,            -- press counter, may drift from reality
-  step_degrees INTEGER,
+  position      INTEGER,           -- press counter, may drift from reality
+  step_degrees  INTEGER,           -- the standing default at the time
+  press_degrees INTEGER,           -- signed turn that caused this frame, NULL
+                                   -- unless reason='press'
   uptime_s     INTEGER,
   rssi         INTEGER,
   fw           TEXT
@@ -29,3 +31,6 @@ CREATE TABLE IF NOT EXISTS readings (
 
 CREATE INDEX IF NOT EXISTS readings_received_at ON readings (received_at);
 CREATE INDEX IF NOT EXISTS readings_reason      ON readings (reason, received_at);
+
+-- Added 2026-08-16 for existing databases:
+--   ALTER TABLE readings ADD COLUMN press_degrees INTEGER;
