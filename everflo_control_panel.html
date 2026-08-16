@@ -464,7 +464,8 @@ function update(r,b){
   kv.innerHTML='kontrast '+f(r.peak.toFixed(3),r.peak>=T.contrast)
     +' · entydighet '+f(r.margin.toFixed(1)+'×',r.margin>=T.margin)
     +' · passning '+f(r.reg.toFixed(2),r.reg>=T.reg)
-    +' · skift '+f(r.dy.toFixed(1)+'px',Math.abs(r.dy)<=20)
+    +' · skift '+f(r.dx.toFixed(0)+'/'+r.dy.toFixed(0)+'px',Math.abs(r.dy)<=20&&Math.abs(r.dx)<=20)
+    +' · lutning '+(r.tilt*57.3).toFixed(1)+'°'
     +' · utbredning '+f(r.spread,r.spread<=T.spread);
   if(b.ok){
     ctx.strokeStyle='#00e676'; ctx.lineWidth=3;
@@ -532,18 +533,30 @@ const bandVal=k=>{const v=parseInt(document.getElementById(k).value,10);
   return Number.isFinite(v)?v:bandDefaults[k];};
 function drawBands(r){
   if(!document.getElementById('bands').open) return;
-  ctx.lineWidth=2;
-  ctx.strokeStyle='#00e676';
-  ctx.strokeRect(bandVal('bXL'),YTOP,bandVal('bXR')-bandVal('bXL'),YBOT-YTOP);
-  ctx.strokeStyle='#4aa3ff';
-  ctx.strokeRect(bandVal('bAX1'),YTOP,bandVal('bAX2')-bandVal('bAX1'),YBOT-YTOP);
-  // What the engine measured, and where the bands would have to move to
-  // follow it. Copy those into balldetector.js if the shift is permanent.
+  const dx=r?r.dx:0, t=r?r.tilt:0;
+  // Draw where the engine actually samples: the base band shifted by the
+  // measured dx and sheared by the measured tilt. If these boxes do not sit
+  // on the tube, that is exactly why there is no reading.
+  const box=(x1,x2,colour)=>{
+    const sx=y=>t*(y-320);
+    ctx.strokeStyle=colour; ctx.lineWidth=2;
+    ctx.beginPath();
+    ctx.moveTo(x1+dx+sx(YTOP), YTOP);
+    ctx.lineTo(x2+dx+sx(YTOP), YTOP);
+    ctx.lineTo(x2+dx+sx(YBOT), YBOT);
+    ctx.lineTo(x1+dx+sx(YBOT), YBOT);
+    ctx.closePath(); ctx.stroke();
+  };
+  box(bandVal('bXL'), bandVal('bXR'), '#00e676');   // ball band
+  box(bandVal('bAX1'), bandVal('bAX2'), '#4aa3ff'); // anchor band
   const h=document.getElementById('bandhint');
   h.textContent = r
-    ? `Uppmätt skift: ${r.dx.toFixed(1)} px i sidled, ${r.dy.toFixed(1)} i höjd. `+
-      `Följer man skiftet blir banden XL=${Math.round(XL+r.dx)}, XR=${Math.round(XR+r.dx)}, `+
-      `AX1=${Math.round(AX1+r.dx)}, AX2=${Math.round(AX2+r.dx)}.`
+    ? `Uppmätt: ${r.dx.toFixed(1)} px i sidled, ${r.dy.toFixed(1)} i höjd, `+
+      `${(r.tilt*57.3).toFixed(1)}° lutning. Rutorna visar var motorn läser — `+
+      `de följer skiftet automatiskt. Blir skiftet permanent, för in `+
+      `XL=${Math.round(XL+r.dx)}, XR=${Math.round(XR+r.dx)}, `+
+      `AX1=${Math.round(AX1+r.dx)}, AX2=${Math.round(AX2+r.dx)} i balldetector.js `+
+      `och gör om kalibreringssvepet — kurvan y→flöde följer inte med av sig själv.`
     : '';
 }
 function saveImage(){
