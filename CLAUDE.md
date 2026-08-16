@@ -249,6 +249,18 @@ rather than output a plausible wrong number — it reads oxygen flow for
 a patient. States: y<152 -> "Max" (knob at its stop, ~5.7); y>435
 (Y_CAL_MAX+12) -> "Under 0.4" (ball at rest / flow off).
 
+Tilt is searched per frame over roughly +/-3 degrees, and the objective is
+registration quality — not peak cleanliness. An objective the ball detector
+influences could be optimised into a confident wrong answer. Measured
+2026-08-16: with the camera tipped 1 degree, compensating raised ambiguity
+from 2.2x to 3.6x and dropped extent from 73 to 33.
+
+**The magnitude gates stay even when every quality gate passes.** After a
+34 px slide the engine finds the ball confidently — all gates green — and
+still reads 1.73 where the truth is 2.0. The gates measure how well the
+ball is *found*; the y->flow curve is bound to the camera pose and degrades
+with it in a way no gate can see. Confidence is not accuracy.
+
 **Order matters**: dx is computed first, because the camera slides sideways
 and every band below is at a fixed x — measured 34 px on 2026-08-16. Sample
 the anchor band at its old x after a sideways slip and dy is meaningless.

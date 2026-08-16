@@ -44,6 +44,9 @@ const RY1=100, RY2=460;    // row band whose column profile gives the sideways s
 const SEARCH=40;           // registration search, px. Wider than the gate below on
                            // purpose: a big shift should be measured and reported,
                            // not silently saturate at the edge of the search.
+const TILTS=[-0.052,-0.035,-0.017,0,0.017,0.026,0.035,0.044,0.052];  // tan(angle),
+                           // roughly -3..+3 degrees. The camera tips as well as
+                           // slides; measured 2 degrees on 2026-08-16.
 const BOXW=82, PASSES=3;   // box blur ~ gaussian sigma 41
 
 const CAL=[1.01885874e-05, -0.0248660156, 9.16204352];                    // flow = a*y^2 + b*y + c
@@ -97,9 +100,17 @@ function flatfield(g){
   for(let i=0;i<out.length;i++) out[i]=g[i]/Math.max(a[i],1e-6);
   return out;
 }
-function bandProfile(ff,x1,x2){
-  const p=new Float32Array(H), n=x2-x1;
-  for(let y=0;y<H;y++){ let s=0; for(let x=x1;x<x2;x++) s+=ff[y*W+x]; p[y]=s/n; }
+/* The x window slides with the row, so a tilted tube is still sampled down
+   its middle. tilt is tan(angle); over 550 rows 2 degrees is 19 px, enough
+   to smear an untilted band across the tube wall. */
+function bandProfile(ff,x1,x2,tilt){
+  const p=new Float32Array(H), n=x2-x1, t=tilt||0;
+  for(let y=0;y<H;y++){
+    const off=Math.round(t*(y-H/2));
+    let s=0;
+    for(let x=x1+off;x<x2+off;x++) s+=ff[y*W+Math.min(W-1,Math.max(0,x))];
+    p[y]=s/n;
+  }
   return p;
 }
 function colProfile(ff,y1,y2){
@@ -171,12 +182,20 @@ function analyze(imgData){
   const hx=align(centre(colProfile(ff,RY1,RY2)), REF.anchorX, SEARCH, 60, 420);
   const dx=hx.shift, regx=hx.quality, xo=Math.round(dx);
 
-  // Vertical registration against the scale ticks, in the shifted band.
-  const hy=align(centre(bandProfile(ff,AX1+xo,AX2+xo)), REF.anchor, SEARCH, 40, 600);
+  // Tilt, then vertical registration. Both come out of the same search: the
+  // tilt that makes the scale ticks match the reference best is the one the
+  // camera actually has. Registration quality is the objective on purpose —
+  // it measures how well the scene matches and cannot be gamed by the ball
+  // detector downstream, the way optimising for a clean peak could.
+  let hy=null, tilt=0;
+  for(const t of TILTS){
+    const h=align(centre(bandProfile(ff,AX1+xo,AX2+xo,t)), REF.anchor, SEARCH, 40, 600);
+    if(!hy || h.quality>hy.quality){ hy=h; tilt=t; }
+  }
   const dy=hy.shift, reg=hy.quality;
 
   // difference profile, shift compensated
-  const pf=bandProfile(ff,XL+xo,XR+xo);
+  const pf=bandProfile(ff,XL+xo,XR+xo,tilt);
   let d=new Float32Array(H);
   for(let y=0;y<H;y++){
     const s=y+dy, i0=Math.floor(s), f=s-i0;
@@ -201,7 +220,7 @@ function analyze(imgData){
   let spread=0; for(let y=0;y<H;y++) if(d[y]>0.3*peak) spread++;
 
   const flow=CAL[0]*ycog*ycog + CAL[1]*ycog + CAL[2];
-  return {y:ycog, peak, margin, reg, regx, dy, dx, flow, spread, profile:d};
+  return {y:ycog, peak, margin, reg, regx, dy, dx, tilt, flow, spread, profile:d};
 }
 
 /* ---------- judgement (text stays Swedish: the operator reads it) ---------- */
