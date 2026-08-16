@@ -52,7 +52,7 @@
   #define INGEST_TOKEN ""
 #endif
 
-#define FW_VERSION "1.8.7"
+#define FW_VERSION "1.8.8"
 
 /* ---------------- MOTOR ---------------- */
 #define USE_TMC_UART 0            // 1 = current control + true freewheel over UART
@@ -173,7 +173,10 @@ void motorStep(int direction, int degrees) {
   digitalWrite(PIN_DIR, (direction * DIRECTION) > 0 ? HIGH : LOW);
   const int n = stepsFor(degrees);
   const int cruise = stepPauseFor(degrees);
-  const int ramp = min(n / 3, STEP_RAMP_MAX);
+  // Same ramp length whatever the move: it only shrinks when the move is too
+  // short to fit an ease in and an ease out, and then the profile becomes a
+  // triangle that never reaches cruise. Short presses are gentler for it.
+  const int ramp = min(n / 2, STEP_RAMP_MAX);
   for (int i = 0; i < n; i++) {
     int extra = 0;
     if (ramp > 0) {
