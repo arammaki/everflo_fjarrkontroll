@@ -74,6 +74,12 @@ Single sketch `everflo_remote_control.ino`. Key pieces:
   120 s portal timeout, restart on failure. `wifiWatchdog()` in `loop()`
   heals runtime drops (3 × 15 s reconnects → `ESP.restart()`).
 - **mDNS**: `syrgas.local`.
+- **Device page** (v1.8.4): the only technician link left is "Starta om
+  enheten", the documented remote-recovery path. Zeroing the counter moved
+  to the control panel: the patient never needs it, it sat behind a confirm
+  dialog on the page she uses daily, and the counter it resets is
+  informational — the cloud log now carries the actual signed turn of every
+  press, which is a better record than a count of presses of unknown size.
 - **Device page** (v1.8.0): picture, the reading, then MINDRE and MER side
   by side. The reading is computed **in the phone**: the device serves the
   detection engine at `/motor.js` straight from flash, and the page draws

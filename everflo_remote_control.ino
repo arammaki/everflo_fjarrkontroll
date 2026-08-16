@@ -52,7 +52,7 @@
   #define INGEST_TOKEN ""
 #endif
 
-#define FW_VERSION "1.8.3"
+#define FW_VERSION "1.8.4"
 
 /* ---------------- MOTOR ---------------- */
 #define USE_TMC_UART 0            // 1 = current control + true freewheel over UART
@@ -311,7 +311,7 @@ static const char PAGE[] = R"HTML(
 </div>
 </div>
 <div id="msg"></div>
-<div class="small"><a href="#" onclick="resetCounter();return false">Nollställ räknare (tekniker)</a> · <a href="#" onclick="restart();return false">Starta om enheten</a> · v%VER%</div>
+<div class="small"><a href="#" onclick="restart();return false">Starta om enheten</a> · v%VER%</div>
 <script src="/motor.js"></script>
 <script>
 const PIN='%PIN%'; const q = PIN ? ('?pin='+PIN) : '';
@@ -375,11 +375,6 @@ async function press(op,deg){
     if(!j.ok) document.getElementById('msg').textContent='Motorn är upptagen – vänta';
   }catch(e){ document.getElementById('msg').textContent='Ingen kontakt'; }
   allButtons().forEach(b=>b.disabled=false);
-}
-async function resetCounter(){
-  if(!confirm('Nollställa räknaren? (endast vid ominstallation)'))return;
-  await fetch('/api/nollstall'+q);
-  document.getElementById('msg').textContent='Räknaren nollställd.';
 }
 async function restart(){
   if(!confirm('Starta om enheten? Bilden återkommer inom en minut.'))return;

@@ -98,6 +98,9 @@
   <button class="secondary" onclick="copyLog()">Kopiera log</button>
 </div>
 <textarea id="log" placeholder="tid;flöde;läge – autolabel-datasetet växer här"></textarea>
+<div class="hint"><a href="#" onclick="resetCounter();return false">Nollställ räknare</a>
+— bara vid ominstallation. Räknaren är informativ: den driver isär så fort ratten
+vrids för hand, och molnloggen har den faktiska vridningen per tryck.</div>
 <div class="hint">Ingen kalibrering behövs — metoden är förkalibrerad mot riggens kamerapose.
 Flyttas kameran: ta ny bildsvepning med "Spara bild" och skicka till Claude.</div>
 
@@ -611,6 +614,14 @@ function saveImage(){
     a.download='bild_'+f+'L_'+tid+'.jpg';
     a.click();
   },'image/jpeg',0.92);
+}
+async function resetCounter(){
+  if(!host){ document.getElementById('status').textContent='Tryck Starta först'; return; }
+  if(!confirm('Nollställa räknaren? (endast vid ominstallation)')) return;
+  try{
+    await fetch('http://'+host+'/api/nollstall');
+    document.getElementById('status').textContent='Räknaren nollställd.';
+  }catch(e){ document.getElementById('status').textContent='Kunde inte nollställa.'; }
 }
 function copyLog(){ navigator.clipboard.writeText(document.getElementById('log').value); }
 
