@@ -52,7 +52,7 @@
   #define INGEST_TOKEN ""
 #endif
 
-#define FW_VERSION "1.8.4"
+#define FW_VERSION "1.8.5"
 
 /* ---------------- MOTOR ---------------- */
 #define USE_TMC_UART 0            // 1 = current control + true freewheel over UART
@@ -302,12 +302,12 @@ static const char PAGE[] = R"HTML(
 <div class="row">
 <button class="plus" onclick="press('plus',20)">+</button>
 <button class="plus" onclick="press('plus',39)">++</button>
-<button class="plus" onclick="press('plus',80)">+++</button>
+<button class="plus" onclick="press('plus',120)">+++</button>
 </div>
 <div class="row">
 <button class="minus" onclick="press('minus',20)">&minus;</button>
 <button class="minus" onclick="press('minus',39)">&minus;&minus;</button>
-<button class="minus" onclick="press('minus',80)">&minus;&minus;&minus;</button>
+<button class="minus" onclick="press('minus',120)">&minus;&minus;&minus;</button>
 </div>
 </div>
 <div id="msg"></div>
