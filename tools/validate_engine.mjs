@@ -56,7 +56,7 @@ const toBmp = (src, name) => {
 const src = readFileSync(ENGINE, 'utf8');
 writeFileSync(join(work, 'engine.mjs'), src +
   '\nexport function __setREF(r){ REF = r; }\n' +
-  'export { XL,XR,AX1,AX2,T,toGray,flatfield,bandProfile,centre,analyze,judge };\n');
+  'export { T,toGray,flatfield,buildRef,analyze,judge };\n');
 const E = await import(pathToFileURL(join(work, 'engine.mjs')).href);
 
 /** 24-bit uncompressed BMP, either row order. */
@@ -84,12 +84,7 @@ function readBmp(path) {
 const refPng = join(work, 'ref.png');
 writeFileSync(refPng, Buffer.from(
   src.match(/const REF_PNG="data:image\/png;base64,([^"]+)"/)[1], 'base64'));
-const ff = E.flatfield(E.toGray(readBmp(toBmp(refPng, 'ref'))));
-E.__setREF({
-  ff,
-  ball: E.bandProfile(ff, E.XL, E.XR),
-  anchor: E.centre(E.bandProfile(ff, E.AX1, E.AX2)),
-});
+E.__setREF(E.buildRef(E.flatfield(E.toGray(readBmp(toBmp(refPng, 'ref'))))));
 
 const files = readdirSync(imageDir)
   .filter((f) => /^bild_([0-9.]+)(?:max)?L_.*\.jpe?g$/i.test(f)).sort();

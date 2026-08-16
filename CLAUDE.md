@@ -238,15 +238,27 @@ partial rename left `judge()` reading `T.kontrast` while `T` defined
 and that quality gate silently stopped rejecting anything (2026-08-15).
 
 ### Engine invariants
-Grayscale -> flatfield (3-pass box blur ~ sigma 41) -> 1D vertical
-registration against scale ticks (anchor band x 296-320) -> clipped
+Grayscale -> flatfield (3-pass box blur ~ sigma 41) -> horizontal
+registration (column profile of rows 100-460) -> vertical registration
+against scale ticks (anchor band x 296-320, sampled at the shifted x) -> clipped
 difference vs reference in ball band (x 252-292) -> smoothed profile ->
 peak + centroid -> quadratic calibration. Never remove the quality
 gates (registration >=0.75, contrast >=0.10, ambiguity >=3.0x,
-|shift| <=20 px, extent <=75 rows): the engine must say "no reading"
+|dx| and |dy| <=20 px, extent <=75 rows): the engine must say "no reading"
 rather than output a plausible wrong number — it reads oxygen flow for
 a patient. States: y<152 -> "Max" (knob at its stop, ~5.7); y>435
 (Y_CAL_MAX+12) -> "Under 0.4" (ball at rest / flow off).
+
+**Order matters**: dx is computed first, because the camera slides sideways
+and every band below is at a fixed x — measured 34 px on 2026-08-16. Sample
+the anchor band at its old x after a sideways slip and dy is meaningless.
+The search runs to +/-40 px while the gate rejects beyond 20: a big shift
+should be measured and named in the Swedish reason, not silently saturate
+at the edge of the search and look like noise.
+
+`buildRef()` is the one place that knows what REF contains — `loadRef()`
+uses it in the browser, `validate_engine.mjs` in Node. Add a field there,
+never in the callers.
 
 All of those numbers come from the sweep, not from taste: the bands were
 measured as the columns where the ball actually moves and where the
