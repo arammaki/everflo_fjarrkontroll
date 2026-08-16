@@ -52,7 +52,7 @@
   #define INGEST_TOKEN ""
 #endif
 
-#define FW_VERSION "1.8.2"
+#define FW_VERSION "1.8.3"
 
 /* ---------------- MOTOR ---------------- */
 #define USE_TMC_UART 0            // 1 = current control + true freewheel over UART
@@ -65,9 +65,11 @@
 #define DIRECTION       -1        // 1 or -1 when + turns the wrong way
                                   // (-1 since v1.6.2: verified on site)
 #define STEP_DEG_MIN    4         // clamp range for a press, whether it comes from
-#define STEP_DEG_MAX    90        // /api/steg or ?steg=N on a press. 90 is a quarter
-                                  // turn — deliberate ceiling on how far one press
-                                  // can move the knob before anyone can react.
+#define STEP_DEG_MAX    180       // /api/steg or ?steg=N on a press. Half a turn is
+                                  // a lot of flow in one press — the ceiling exists
+                                  // so a bad request cannot spin the knob, not to
+                                  // second-guess a deliberate one. Raised from 90
+                                  // for calibration work 2026-08-16.
 #define MICROSTEPS      8         // TMC2209 standalone: MS1=MS2=GND => 1/8
 #define STEP_PAUSE_US   2500      // µs between microsteps at cruise (lower = faster)
 #define STEP_RAMP_US    3000      // extra µs at the very start and end of a move
@@ -395,10 +397,12 @@ bool pinOK(httpd_req_t *req) {
   return strcmp(val, WEB_PIN) == 0;
 }
 
-esp_err_t sendJson(httpd_req_t *req, bool ok) {
-  char b[64];
-  snprintf(b, sizeof(b), "{\"ok\":%s,\"lage\":%d}",   // JSON field kept: the page reads it
-           ok ? "true" : "false", position);
+esp_err_t sendJson(httpd_req_t *req, bool ok, int applied) {
+  char b[96];
+  // `steg` is what the firmware actually turned, after its own clamping, so a
+  // caller asking for 180 can see it got 180 — or did not.
+  snprintf(b, sizeof(b), "{\"ok\":%s,\"lage\":%d,\"steg\":%d}",
+           ok ? "true" : "false", position, applied);
   httpd_resp_set_type(req, "application/json");
   // CORS on every JSON API, not just /api/steg. The control panel runs from
   // a different origin and today fires the motor calls no-cors, which makes
@@ -433,13 +437,13 @@ int pressDegrees(httpd_req_t *req) {
   }
   return stepDegrees;
 }
-esp_err_t h_plus(httpd_req_t *req)  { if(!pinOK(req)) return httpd_resp_send_err(req,HTTPD_403_FORBIDDEN,"pin"); return sendJson(req, move(+1, pressDegrees(req))); }
-esp_err_t h_minus(httpd_req_t *req) { if(!pinOK(req)) return httpd_resp_send_err(req,HTTPD_403_FORBIDDEN,"pin"); return sendJson(req, move(-1, pressDegrees(req))); }
-esp_err_t h_reset(httpd_req_t *req) { if(!pinOK(req)) return httpd_resp_send_err(req,HTTPD_403_FORBIDDEN,"pin"); position=0; prefs.putInt("lage",0); return sendJson(req,true); }
-esp_err_t h_status(httpd_req_t *req){ return sendJson(req, true); }
+esp_err_t h_plus(httpd_req_t *req)  { if(!pinOK(req)) return httpd_resp_send_err(req,HTTPD_403_FORBIDDEN,"pin"); int d=pressDegrees(req); return sendJson(req, move(+1, d), d); }
+esp_err_t h_minus(httpd_req_t *req) { if(!pinOK(req)) return httpd_resp_send_err(req,HTTPD_403_FORBIDDEN,"pin"); int d=pressDegrees(req); return sendJson(req, move(-1, d), d); }
+esp_err_t h_reset(httpd_req_t *req) { if(!pinOK(req)) return httpd_resp_send_err(req,HTTPD_403_FORBIDDEN,"pin"); position=0; prefs.putInt("lage",0); return sendJson(req,true,stepDegrees); }
+esp_err_t h_status(httpd_req_t *req){ return sendJson(req, true, stepDegrees); }
 esp_err_t h_restart(httpd_req_t *req){
   if(!pinOK(req)) return httpd_resp_send_err(req,HTTPD_403_FORBIDDEN,"pin");
-  sendJson(req, true);
+  sendJson(req, true, stepDegrees);
   logLine("Restart via web link");
   delay(300);
   ESP.restart();

@@ -308,7 +308,7 @@ Never auto-flash or trigger OTA; flash manually on-site, keeping the
 previous firmware as fallback. Current UI needs only `/bild` +
 `/api/plus|minus` (stable since v1.6.6). `/api/steg?v=N` (implemented
 in v1.7.0) adds adjustable step size: clamped in firmware to compiled
-4–45°/press, RAM only, reverts to default 39°/press on reboot. The
+4–180°/press, RAM only, reverts to default 39°/press on reboot. The
 control panel exposes it as a free number field and shows the value the
 firmware actually applied after clamping.
 
