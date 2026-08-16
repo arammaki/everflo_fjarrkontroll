@@ -52,7 +52,7 @@
   #define INGEST_TOKEN ""
 #endif
 
-#define FW_VERSION "1.8.5"
+#define FW_VERSION "1.8.6"
 
 /* ---------------- MOTOR ---------------- */
 #define USE_TMC_UART 0            // 1 = current control + true freewheel over UART
@@ -141,11 +141,16 @@ void logLine(const String &s) {
 int stepsFor(int degrees) {       // microsteps for a given angle
   return (int)(degrees / (1.8f / MICROSTEPS) + 0.5f);
 }
-/* Bigger steps run slower. A large jump moves the ball far, and a slower
-   sweep gives the eye time to follow it — and shakes the rig less. */
+/* Bigger steps run a little slower — a large jump moves the ball far, and a
+   slower sweep gives the eye time to follow it. Gently, and capped: at 30 µs
+   per degree the penalty compounded into 5.6 s for a half turn, which is a
+   long time to stand and wait for a knob. */
+#define STEP_SLOW_PER_DEG 8       // µs added per degree above DEG_PER_PRESS
+#define STEP_PAUSE_MAX_US 3500    // never slower than this, however big the step
 int stepPauseFor(int degrees) {
   if (degrees <= DEG_PER_PRESS) return STEP_PAUSE_US;
-  return STEP_PAUSE_US + (degrees - DEG_PER_PRESS) * 30;
+  const int p = STEP_PAUSE_US + (degrees - DEG_PER_PRESS) * STEP_SLOW_PER_DEG;
+  return p < STEP_PAUSE_MAX_US ? p : STEP_PAUSE_MAX_US;
 }
 void motorInit() {
   pinMode(PIN_STEP, OUTPUT);
