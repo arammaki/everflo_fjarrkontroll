@@ -52,7 +52,7 @@
   #define INGEST_TOKEN ""
 #endif
 
-#define FW_VERSION "1.8.6"
+#define FW_VERSION "1.8.7"
 
 /* ---------------- MOTOR ---------------- */
 #define USE_TMC_UART 0            // 1 = current control + true freewheel over UART
@@ -71,9 +71,14 @@
                                   // second-guess a deliberate one. Raised from 90
                                   // for calibration work 2026-08-16.
 #define MICROSTEPS      8         // TMC2209 standalone: MS1=MS2=GND => 1/8
-#define STEP_PAUSE_US   2500      // µs between microsteps at cruise (lower = faster)
-#define STEP_RAMP_US    3000      // extra µs at the very start and end of a move
-#define STEP_RAMP_MAX   60        // microsteps spent easing in, and again easing out
+#define STEP_PAUSE_US   1800      // µs between microsteps at cruise (lower = faster).
+                                  // 125 deg/s. A stepper runs far faster once moving
+                                  // than it can start from standstill, which is what
+                                  // the ramp below is for — raise the speed here, not
+                                  // the jolt at the ends.
+#define STEP_RAMP_US    3700      // extra µs at the very start and end of a move, so
+                                  // the first step is still a gentle 41 deg/s
+#define STEP_RAMP_MAX   100       // microsteps spent easing in, and again easing out
 
 /* ---------------- SECURITY ---------------- */
 #define WEB_PIN ""                // e.g. "4711" => requires ?pin=4711 on API calls.
@@ -141,17 +146,10 @@ void logLine(const String &s) {
 int stepsFor(int degrees) {       // microsteps for a given angle
   return (int)(degrees / (1.8f / MICROSTEPS) + 0.5f);
 }
-/* Bigger steps run a little slower — a large jump moves the ball far, and a
-   slower sweep gives the eye time to follow it. Gently, and capped: at 30 µs
-   per degree the penalty compounded into 5.6 s for a half turn, which is a
-   long time to stand and wait for a knob. */
-#define STEP_SLOW_PER_DEG 8       // µs added per degree above DEG_PER_PRESS
-#define STEP_PAUSE_MAX_US 3500    // never slower than this, however big the step
-int stepPauseFor(int degrees) {
-  if (degrees <= DEG_PER_PRESS) return STEP_PAUSE_US;
-  const int p = STEP_PAUSE_US + (degrees - DEG_PER_PRESS) * STEP_SLOW_PER_DEG;
-  return p < STEP_PAUSE_MAX_US ? p : STEP_PAUSE_MAX_US;
-}
+/* No size penalty any more. Slowing big steps down was meant to let the eye
+   follow the ball, but it compounded into 5.6 s for a half turn and the ramp
+   already gives a soft start and stop. Cruise speed is one constant now. */
+int stepPauseFor(int degrees) { (void)degrees; return STEP_PAUSE_US; }
 void motorInit() {
   pinMode(PIN_STEP, OUTPUT);
   pinMode(PIN_DIR,  OUTPUT);
