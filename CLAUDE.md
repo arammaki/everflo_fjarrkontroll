@@ -209,8 +209,8 @@ breaks. Any new endpoints the pages read need the same headers —
 are fire-and-forget by design.
 
 ### Calibration is baked in — do not regenerate casually
-Both files embed a reference image (median of the 27 labeled frames of
-the 2026-08-16 sweep, 8-bit grayscale — the engine converts to gray as its
+Both files embed a reference image (median of the 25 labeled frames of
+the second 2026-08-16 sweep, 09:37-09:42, 8-bit grayscale — the engine converts to gray as its
 first step, so color would only triple the file for data it discards) and
 a quadratic y->flow calibration bound to the exact camera pose and 4:3
 aspect ratio at calibration time. A physical camera move, refocus, or
@@ -252,10 +252,18 @@ peak + centroid -> quadratic calibration. Never remove the quality
 gates (registration >=0.75, contrast >=0.10, ambiguity >=3.0x,
 |dx| and |dy| <=20 px, extent <=75 rows): the engine must say "no reading"
 rather than output a plausible wrong number — it reads oxygen flow for
-a patient. States: y<152 -> "Max" (knob at its stop, ~5.7); y>435
-(Y_CAL_MAX+12) -> "Under 0.4" (ball at rest / flow off).
+a patient. States: y<132 -> "Max", a sanity guard only —
+the sweep labels the whole physical range, min (y=434, reads 0.25) up to
+6 L/min (y=139), so nothing the knob can reach is extrapolated any more.
+y>439 (Y_CAL_MAX+12) -> "Under 0.3".
 
-Tilt is searched per frame over roughly +/-3 degrees, and the objective is
+The tube is not vertical in the frame: about 1.7 degrees on this rig, baked
+into every band as `BASE_TILT` so the reference and the frames are sampled
+the same way. Sharpening the bands that way raised contrast across the sweep
+from 0.16-0.32 to 0.17-0.35. The per-frame search then only has to find how
+much the camera has tipped SINCE calibration.
+
+Tilt is searched per frame over roughly +/-3 degrees around that base, and the objective is
 registration quality — not peak cleanliness. An objective the ball detector
 influences could be optimised into a confident wrong answer. Measured
 2026-08-16: with the camera tipped 1 degree, compensating raised ambiguity
@@ -297,9 +305,10 @@ suite, not by the sweep.
 runs the real `balldetector.js` against the labelled images and fails
 (non-zero) on any rejection or a reading more than 0.2 L/min off its
 label. No npm packages, no browser — it decodes with macOS `sips`. Run it
-after every engine change. Measured 2026-08-16 against the new
-sweep: mean 0.036 L/min, worst 0.113, 26 read, 0 rejected, the frame with
-the knob at its stop correctly reported as Max.
+after every engine change. Measured 2026-08-16 against the second
+sweep: mean 0.032 L/min, worst 0.101, 24 read, 0 rejected. The first sweep
+now fails three frames against it, which is correct — it is a different
+camera pose.
 
 That the sips decoder lands on the labels is also mild evidence that the
 engine tolerates a non-browser JPEG decoder — relevant if the reading is

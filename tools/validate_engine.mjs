@@ -87,7 +87,7 @@ writeFileSync(refPng, Buffer.from(
 E.__setREF(E.buildRef(E.flatfield(E.toGray(readBmp(toBmp(refPng, 'ref'))))));
 
 const files = readdirSync(imageDir)
-  .filter((f) => /^bild_([0-9.]+)(?:max)?L_.*\.jpe?g$/i.test(f)).sort();
+  .filter((f) => /^bild_([0-9.]+|min)(max)?L_.*\.jpe?g$/i.test(f)).sort();
 if (!files.length) {
   console.error(`No bild_*.jpg found in ${imageDir}`);
   process.exit(2);
@@ -97,23 +97,23 @@ console.log('label   read   diff  | contrast  unamb  match  shift  spread | verd
 let sum = 0, n = 0, worst = 0, failures = 0;
 
 for (const f of files) {
-  const m = f.match(/^bild_([0-9.]+)(max)?L_/i);
+  const m = f.match(/^bild_([0-9.]+|min)(max)?L_/i);
   const label = m[1], isMax = !!m[2];
   const r = E.analyze(readBmp(toBmp(join(imageDir, f), label)));
   const b = E.judge(r);
   const verdict = !b.ok ? 'REJECTED' : b.maxState ? 'Max' : b.bottomState ? 'Below 0.5' : 'ok';
 
+  // 'min' is the ball at rest: there is no true value to compare against, it
+  // only has to produce a reading rather than a refusal. Everything else,
+  // including the frame at the max mark, is compared numerically — the sweep
+  // now covers the whole physical range, so nothing up there is extrapolated.
   let diff = '';
-  if (!isMax) {
-    if (verdict !== 'ok') { failures++; }
-    else {
-      const d = r.flow - Number(label);
-      diff = (d >= 0 ? '+' : '') + d.toFixed(2);
-      sum += Math.abs(d); n++; worst = Math.max(worst, Math.abs(d));
-      if (Math.abs(d) > TOLERANCE) failures++;
-    }
-  } else if (verdict !== 'Max') {
-    failures++;   // the top mark must read as Max, never as a number
+  if (verdict !== 'ok' && verdict !== 'Below 0.5') { failures++; }
+  else if (label !== 'min') {
+    const d = r.flow - Number(label);
+    diff = (d >= 0 ? '+' : '') + d.toFixed(2);
+    sum += Math.abs(d); n++; worst = Math.max(worst, Math.abs(d));
+    if (Math.abs(d) > TOLERANCE) failures++;
   }
 
   console.log(
