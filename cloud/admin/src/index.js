@@ -369,6 +369,22 @@ if(rows.length) select(0);
 </body></html>`;
 }
 
+/* Rebuilt field by field rather than stored as the client sent it. Truncating
+   a JSON string to a length limit can cut it mid-value, and this column exists
+   to be read back during an investigation months later — corrupt JSON there
+   fails exactly when it is needed. Six known numbers are bounded by
+   construction and always parse. */
+const QUALITY = { reg: 3, peak: 3, margin: 1, dx: 1, dy: 1, spread: 0 };
+function cleanQuality(q) {
+  if (!q || typeof q !== 'object') return null;
+  const out = {};
+  for (const [k, dp] of Object.entries(QUALITY)) {
+    const v = q[k];
+    if (Number.isFinite(v) && Math.abs(v) < 1e6) out[k] = Number(v.toFixed(dp));
+  }
+  return Object.keys(out).length ? JSON.stringify(out) : null;
+}
+
 /** Validates one client-supplied reading. Anything odd is dropped, not stored. */
 function clean(x) {
   if (!x || !Number.isInteger(x.id) || x.id <= 0) return null;
@@ -376,11 +392,13 @@ function clean(x) {
   const flow = x.flow == null ? null
     : (Number.isFinite(x.flow) && x.flow >= -1 && x.flow <= 20 ? x.flow : null);
   if (x.state === 'ok' && flow == null) return null;
-  const engine = typeof x.engine === 'string' ? x.engine.slice(0, 32) : null;
+  // The build hash, nothing else: `engine` is the dimension the whole
+  // then-versus-now comparison is indexed by, and a junk value there is a
+  // phantom engine that never existed.
+  const engine = typeof x.engine === 'string' && /^[0-9a-f]{1,16}$/.test(x.engine)
+    ? x.engine : null;
   if (!engine) return null;
-  let quality = null;
-  try { quality = JSON.stringify(x.quality).slice(0, 400); } catch { quality = null; }
-  return { id: x.id, flow, state: x.state, engine, quality };
+  return { id: x.id, flow, state: x.state, engine, quality: cleanQuality(x.quality) };
 }
 
 export default {
@@ -407,6 +425,13 @@ export default {
     if (url.pathname === '/analys') {
       if (request.method !== 'POST') {
         return new Response('method not allowed', { status: 405, headers: { allow: 'POST' } });
+      }
+      /* Access says WHO the caller is, not which page made the call. Without
+         this, a site the logged-in operator happens to visit could post
+         readings with their session. sendBeacon sends Origin too, so the
+         flush on unload still works; non-browser callers must set it. */
+      if (request.headers.get('origin') !== url.origin) {
+        return new Response('bad origin', { status: 403 });
       }
       let body;
       try { body = await request.json(); } catch { return new Response('bad json', { status: 400 }); }
