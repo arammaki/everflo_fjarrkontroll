@@ -145,11 +145,17 @@ const XL=246, XR=278;      // the ball's travel band
 const AX1=222, AX2=250;    // anchor band (scale ticks) used for registration
 const YTOP=60, YBOT=610;   // valid search range
 const RY1=100, RY2=460;    // row band whose column profile gives the sideways shift
-/* The tube is not vertical in the frame — about 1.7 degrees on this rig. That
-   is baked into every band so the reference and the frames are sampled the
-   same way; the per-frame search below then only has to find how much the
-   camera has tipped SINCE calibration, not the standing tilt. */
-const BASE_TILT=0.029679;
+/* No standing tilt is baked in, and that is a measured decision, not an
+   oversight. The tube does lean in the frame, but the apparent lean is not
+   the same across it — measured 2026-08-16: -1.0 degrees on the left of the
+   tube, 2.2 in the middle, 5.0 on the right, which is perspective on a round
+   glass cylinder rather than a rotation. More to the point, the reference is
+   the median of the same frames, so any smear cancels; tilting the band only
+   walks it off the tube at the top and bottom. Against the sweep, 0 beat
+   every alternative: worst error 0.093 vs 0.101 at 1.7 degrees, lowest
+   contrast 0.193 vs 0.172, lowest ambiguity 9.7x vs 5.3x. The per-frame
+   search below still earns its place — it catches the camera tipping
+   relative to the calibration, which is a different thing entirely. */
 const SEARCH=40;           // registration search, px. Wider than the gate below on
                            // purpose: a big shift should be measured and reported,
                            // not silently saturate at the edge of the search.
@@ -158,7 +164,7 @@ const TILTS=[-0.052,-0.035,-0.017,0,0.017,0.026,0.035,0.044,0.052];  // tan(angl
                            // slides; measured 2 degrees on 2026-08-16.
 const BOXW=82, PASSES=3;   // box blur ~ gaussian sigma 41
 
-const CAL=[1.08136176e-5, -0.0254702034, 9.27333696];   // flow = a*y^2 + b*y + c
+const CAL=[1.07316607e-05, -0.0254537965, 9.27668530];   // flow = a*y^2 + b*y + c
 const Y_CAL_MIN=139, Y_CAL_MAX=427;   // y range covered by the labelled data
 // The 2026-08-16 sweep labels the whole physical range, min (y=434, about
 // 0.25 L/min) up to 6 L at y=139, and the curve fits 6 L to within 0.05. So
@@ -273,8 +279,8 @@ let REF=null;
    set in one path and forgotten in the other. */
 function buildRef(ff){
   return {ff,
-          ball:    bandProfile(ff, XL, XR, BASE_TILT),
-          anchor:  centre(bandProfile(ff, AX1, AX2, BASE_TILT)),
+          ball:    bandProfile(ff, XL, XR),
+          anchor:  centre(bandProfile(ff, AX1, AX2)),
           anchorX: centre(colProfile(ff, RY1, RY2))};
 }
 function loadRef(){
@@ -315,7 +321,7 @@ function analyze(imgData, opts){
   // it measures how well the scene matches and cannot be gamed by the ball
   // detector downstream, the way optimising for a clean peak could.
   let hy=null, tilt=0;
-  const candidates = (typeof forceTilt==='number') ? [forceTilt] : TILTS.map(t=>BASE_TILT+t);
+  const candidates = (typeof forceTilt==='number') ? [forceTilt] : TILTS;
   for(const t of candidates){
     const h=align(centre(bandProfile(ff,AX1+xo,AX2+xo,t)), REF.anchor, SEARCH, 40, 600);
     if(!hy || h.quality>hy.quality){ hy=h; tilt=t; }

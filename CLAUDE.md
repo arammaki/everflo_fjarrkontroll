@@ -257,13 +257,15 @@ the sweep labels the whole physical range, min (y=434, reads 0.25) up to
 6 L/min (y=139), so nothing the knob can reach is extrapolated any more.
 y>439 (Y_CAL_MAX+12) -> "Under 0.3".
 
-The tube is not vertical in the frame: about 1.7 degrees on this rig, baked
-into every band as `BASE_TILT` so the reference and the frames are sampled
-the same way. Sharpening the bands that way raised contrast across the sweep
-from 0.16-0.32 to 0.17-0.35. The per-frame search then only has to find how
-much the camera has tipped SINCE calibration.
+**No standing tilt is baked into the bands, and that was measured, not
+assumed.** The tube leans in the frame, but not uniformly: -1.0 degrees on
+its left, 2.2 in the middle, 5.0 on the right, which is perspective on a
+round glass cylinder. And the reference is the median of the same frames, so
+any smear cancels — tilting the band only walks it off the tube at the ends.
+Against the sweep, 0 beat every alternative (worst error 0.093 vs 0.101 at
+1.7 degrees, lowest contrast 0.193 vs 0.172, lowest ambiguity 9.7x vs 5.3x).
 
-Tilt is searched per frame over roughly +/-3 degrees around that base, and the objective is
+Tilt is still searched per frame over roughly +/-3 degrees, and the objective is
 registration quality — not peak cleanliness. An objective the ball detector
 influences could be optimised into a confident wrong answer. Measured
 2026-08-16: with the camera tipped 1 degree, compensating raised ambiguity
@@ -306,7 +308,7 @@ runs the real `balldetector.js` against the labelled images and fails
 (non-zero) on any rejection or a reading more than 0.2 L/min off its
 label. No npm packages, no browser — it decodes with macOS `sips`. Run it
 after every engine change. Measured 2026-08-16 against the second
-sweep: mean 0.032 L/min, worst 0.101, 24 read, 0 rejected. The first sweep
+sweep: mean 0.031 L/min, worst 0.093, 24 read, 0 rejected. The first sweep
 now fails three frames against it, which is correct — it is a different
 camera pose.
 
