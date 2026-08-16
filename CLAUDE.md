@@ -257,15 +257,33 @@ the sweep labels the whole physical range, min (y=434, reads 0.25) up to
 6 L/min (y=139), so nothing the knob can reach is extrapolated any more.
 y>439 (Y_CAL_MAX+12) -> "Under 0.3".
 
-**No standing tilt is baked into the bands, and that was measured, not
-assumed.** The tube leans in the frame, but not uniformly: -1.0 degrees on
-its left, 2.2 in the middle, 5.0 on the right, which is perspective on a
-round glass cylinder. And the reference is the median of the same frames, so
-any smear cancels — tilting the band only walks it off the tube at the ends.
-Against the sweep, 0 beat every alternative (worst error 0.093 vs 0.101 at
-1.7 degrees, lowest contrast 0.193 vs 0.172, lowest ambiguity 9.7x vs 5.3x).
+**`BASE_TILT` is negative, and the sign is the whole trap.** The tube leans
+about 1.2 degrees anticlockwise in the upright picture, but analysis runs on
+a MIRRORED canvas — the control panel applies `scale(-1,1)` before handing
+pixels over — and a mirror flips the sign of a tilt. So the constant carries
+the opposite sign to the angle anyone measures on screen. Entering the
+measured sign directly tilts the bands the wrong way and doubles the
+misalignment: that was done on 2026-08-16, and the mistake read as "tilt does
+not help" because a sweep that only tried the positive side saw the whole
+range fall away from the optimum.
 
-Tilt is still searched per frame over roughly +/-3 degrees, and the objective is
+Measured with the real engine over the labelled sweep at 0.1-degree steps,
+-1.2 degrees against 0: worst error 0.082 -> 0.078, lowest contrast
+0.193 -> 0.198, lowest ambiguity 9.7x -> 14.1x. Accuracy hardly moves; the
+margin to the quality gates is what improves, which is the point.
+
+**The optimum is narrow — do not nudge this constant by eye.** Past it the
+ambiguity margin falls off a cliff: 14.1x at -1.2, 6.5x at -1.5, 3.9x at -1.8,
+against a gate that rejects below 3.0. Re-measure across the sweep instead.
+The apparent lean also varies across the tube (0.6 degrees at its left, 1.7 at
+its right — perspective on a round glass cylinder), so no single number is
+"correct" by measurement alone; the sweep picks it.
+
+Tilt is still searched per frame over roughly +/-3 degrees AROUND that base,
+so the search finds how far the camera has tipped SINCE calibration. `analyze()`
+reports that deviation, not the absolute angle, and `opts.tilt` overrides the
+deviation too — 0 means "as calibrated" everywhere a tilt is shown or entered.
+The objective is
 registration quality — not peak cleanliness. An objective the ball detector
 influences could be optimised into a confident wrong answer. Measured
 2026-08-16: with the camera tipped 1 degree, compensating raised ambiguity
@@ -308,7 +326,7 @@ runs the real `balldetector.js` against the labelled images and fails
 (non-zero) on any rejection or a reading more than 0.2 L/min off its
 label. No npm packages, no browser — it decodes with macOS `sips`. Run it
 after every engine change. Measured 2026-08-16 against the second
-sweep: mean 0.031 L/min, worst 0.093, 24 read, 0 rejected. The first sweep
+sweep: mean 0.031 L/min, worst 0.078, 24 read, 0 rejected. The first sweep
 now fails three frames against it, which is correct — it is a different
 camera pose.
 

@@ -37,26 +37,39 @@ const XL=246, XR=278;      // the ball's travel band
 const AX1=222, AX2=250;    // anchor band (scale ticks) used for registration
 const YTOP=60, YBOT=610;   // valid search range
 const RY1=100, RY2=460;    // row band whose column profile gives the sideways shift
-/* No standing tilt is baked in, and that is a measured decision, not an
-   oversight. The tube does lean in the frame, but the apparent lean is not
-   the same across it — measured 2026-08-16: -1.0 degrees on the left of the
-   tube, 2.2 in the middle, 5.0 on the right, which is perspective on a round
-   glass cylinder rather than a rotation. More to the point, the reference is
-   the median of the same frames, so any smear cancels; tilting the band only
-   walks it off the tube at the top and bottom. Against the sweep, 0 beat
-   every alternative: worst error 0.093 vs 0.101 at 1.7 degrees, lowest
-   contrast 0.193 vs 0.172, lowest ambiguity 9.7x vs 5.3x. The per-frame
-   search below still earns its place — it catches the camera tipping
-   relative to the calibration, which is a different thing entirely. */
+/* The tube leans about 1.2 degrees anticlockwise in the upright picture, so
+   every band follows it. Mind the sign: analysis runs on a MIRRORED canvas
+   (the control panel applies scale(-1,1) before handing pixels over), and a
+   mirror flips the sign of a tilt. What reads as 1.5 anticlockwise on screen
+   is therefore negative here. Getting that backwards tilts the bands the
+   wrong way and doubles the misalignment instead of removing it — measured,
+   after doing exactly that on 2026-08-16.
+
+   The magnitude was picked by running the real engine over the labelled sweep
+   at 0.1-degree steps. Accuracy barely moves (worst error 0.082 either way);
+   what moves is the margin to the quality gates, and that is the point —
+   lowest contrast 0.193 -> 0.198, lowest ambiguity 9.7x -> 14.1x. Half again
+   as much room before a bad frame can pass as a good one.
+
+   The optimum is narrow, and past it the ambiguity margin falls off a cliff:
+   14.1x here, 6.5x at -1.5, 3.9x at -1.8 against a gate that rejects below
+   3.0. Do not nudge this constant by eye — re-measure across the sweep.
+
+   That the best value on the data (1.5) matches what the eye measures on the
+   screen (0.6 at the tube's left, 1.7 at its right — perspective on a round
+   cylinder) is the check that this compensates a real tilt rather than
+   fitting noise. */
+const BASE_TILT=-0.02094701;   // tan(-1.2 degrees), in mirrored image coordinates
 const SEARCH=40;           // registration search, px. Wider than the gate below on
                            // purpose: a big shift should be measured and reported,
                            // not silently saturate at the edge of the search.
 const TILTS=[-0.052,-0.035,-0.017,0,0.017,0.026,0.035,0.044,0.052];  // tan(angle),
-                           // roughly -3..+3 degrees. The camera tips as well as
-                           // slides; measured 2 degrees on 2026-08-16.
+                           // roughly -3..+3 degrees AROUND BASE_TILT. This search
+                           // finds how far the camera has tipped SINCE calibration,
+                           // not the tube's standing lean, which is already baked in.
 const BOXW=82, PASSES=3;   // box blur ~ gaussian sigma 41
 
-const CAL=[1.07316607e-05, -0.0254537965, 9.27668530];   // flow = a*y^2 + b*y + c
+const CAL=[9.93317466e-06, -0.0249564181, 9.20201283];   // flow = a*y^2 + b*y + c
 const Y_CAL_MIN=139, Y_CAL_MAX=427;   // y range covered by the labelled data
 // The 2026-08-16 sweep labels the whole physical range, min (y=434, about
 // 0.25 L/min) up to 6 L at y=139, and the curve fits 6 L to within 0.05. So
@@ -171,8 +184,8 @@ let REF=null;
    set in one path and forgotten in the other. */
 function buildRef(ff){
   return {ff,
-          ball:    bandProfile(ff, XL, XR),
-          anchor:  centre(bandProfile(ff, AX1, AX2)),
+          ball:    bandProfile(ff, XL, XR, BASE_TILT),
+          anchor:  centre(bandProfile(ff, AX1, AX2, BASE_TILT)),
           anchorX: centre(colProfile(ff, RY1, RY2))};
 }
 function loadRef(){
@@ -212,8 +225,13 @@ function analyze(imgData, opts){
   // camera actually has. Registration quality is the objective on purpose —
   // it measures how well the scene matches and cannot be gamed by the ball
   // detector downstream, the way optimising for a clean peak could.
-  let hy=null, tilt=0;
-  const candidates = (typeof forceTilt==='number') ? [forceTilt] : TILTS;
+  // Everything here is relative to BASE_TILT: the search is centred on it, and
+  // opts.tilt overrides the DEVIATION, not the absolute angle. So 0 means "as
+  // calibrated" everywhere a tilt is shown or entered, which is the only
+  // reading that tells the operator whether the camera has moved.
+  let hy=null, tilt=BASE_TILT;
+  const candidates = (typeof forceTilt==='number')
+    ? [BASE_TILT+forceTilt] : TILTS.map(t=>BASE_TILT+t);
   for(const t of candidates){
     const h=align(centre(bandProfile(ff,AX1+xo,AX2+xo,t)), REF.anchor, SEARCH, 40, 600);
     if(!hy || h.quality>hy.quality){ hy=h; tilt=t; }
@@ -246,7 +264,9 @@ function analyze(imgData, opts){
   let spread=0; for(let y=0;y<H;y++) if(d[y]>0.3*peak) spread++;
 
   const flow=CAL[0]*ycog*ycog + CAL[1]*ycog + CAL[2];
-  return {y:ycog, peak, margin, reg, regx, dy, dx, tilt, flow, spread, profile:d};
+  return {y:ycog, peak, margin, reg, regx, dy, dx,
+          tilt: tilt-BASE_TILT,          // deviation from calibration, not absolute
+          flow, spread, profile:d};
 }
 
 /* ---------- judgement (text stays Swedish: the operator reads it) ---------- */
