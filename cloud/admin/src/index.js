@@ -100,6 +100,12 @@ function renderPage(rows, now) {
  table{border-collapse:collapse;width:100%;margin-top:18px;font-size:.9rem}
  th,td{text-align:left;padding:6px 8px;border-bottom:1px solid #ddd}
  th{color:#666;font-weight:600}
+ /* The turn column is the one thing scanned down the page, so the digits line
+    up and the sign carries colour. Without these the classes emitted below
+    rendered as plain text. */
+ .num{text-align:right;font-variant-numeric:tabular-nums}
+ .up{color:#1c6b3c;font-weight:600}
+ .down{color:#a33;font-weight:600}
 </style></head><body>
 <h1>EverFlo — logg</h1>
 ${banner}
