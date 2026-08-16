@@ -87,7 +87,9 @@ Single sketch `everflo_remote_control.ino`. Key pieces:
   and runs `analyze()`/`judge()` once a second. Nothing to transfer to a
   phone — she just opens `syrgas.local`. The engine is a separate asset on
   purpose: `h_index` copies the page into a String per request, and ~90 kB
-  of engine would not fit in heap. When the engine refuses, the page shows
+  of engine would not fit in heap, and it is requested as
+  `/motor.js?v=<FW_VERSION>` so a version bump busts its year-long immutable
+  cache. When the engine refuses, the page shows
   its Swedish reason instead of a number, and a stale frame clears the
   number as well as dimming the picture — a number that outlives the frame
   it came from is the one thing this page must never show.
@@ -151,8 +153,13 @@ Single sketch `everflo_remote_control.ino`. Key pieces:
     `bild_<flow>L_<timestamp>.jpg`. The existing labelled dataset and the
     (external) test suite parse it. Change it only together with a fresh
     labelled sweep, and say so out loud when you do.
-- **Bump `FW_VERSION` on every behavioral change** — the page footer shows
-  it, and it is how the user verifies a flash actually took (cache traps).
+- **Bump `FW_VERSION` on every behavioral change, including engine-only
+  changes** — the page footer shows it, it is how the user verifies a flash
+  actually took, and it is also the cache key for the engine: the page loads
+  `/motor.js?v=<FW_VERSION>`, which is served immutable for a year. Forget the
+  bump after an engine change and a phone that cached the old engine keeps
+  running it after a correct flash. That happened on 2026-08-16 — three
+  recalibrations landed while the version stayed 1.8.9.
 - One focused change per commit; commit message style for firmware changes:
   `v1.7.x: kort beskrivning`. No wholesale refactors.
 - `loop()` must stay non-blocking (heartbeat + wifiWatchdog + button debounce

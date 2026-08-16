@@ -52,7 +52,7 @@
   #define INGEST_TOKEN ""
 #endif
 
-#define FW_VERSION "1.8.9"
+#define FW_VERSION "1.9.0"
 
 /* ---------------- MOTOR ---------------- */
 #define USE_TMC_UART 0            // 1 = current control + true freewheel over UART
@@ -318,7 +318,7 @@ static const char PAGE[] = R"HTML(
 </div>
 <div id="msg"></div>
 <div class="small"><a href="#" onclick="restart();return false">Starta om enheten</a> · v%VER%</div>
-<script src="/motor.js"></script>
+<script src="/motor.js?v=%VER%"></script>
 <script>
 const PIN='%PIN%'; const q = PIN ? ('?pin='+PIN) : '';
 const cv=document.getElementById('cv'), ctx=cv.getContext('2d',{willReadFrequently:true});
@@ -477,7 +477,18 @@ esp_err_t h_step(httpd_req_t *req) {
 }
 /* The detection engine, straight from flash. Kept out of the page string
    because h_index copies that into a String on every request and ~90 kB of
-   engine would not fit in heap. Immutable: it only changes with a flash. */
+   engine would not fit in heap.
+
+   Cached hard AND versioned, and both halves are load-bearing. The engine is
+   ~90 kB over 2.4 GHz wifi, so refetching it every page load is expensive —
+   hence a year and immutable. But it DOES change, on every flash, and
+   immutable means the browser never revalidates. So the page asks for
+   /motor.js?v=<FW_VERSION> and a version bump is what busts the cache.
+
+   This bit me on 2026-08-16: the engine was recalibrated three times while
+   FW_VERSION stayed at 1.8.9, and a phone that had already cached the old
+   engine would have kept refusing to read after a flash that was in fact
+   fine. Bump FW_VERSION on every engine change, not just firmware changes. */
 esp_err_t h_engine(httpd_req_t *req) {
   httpd_resp_set_type(req, "application/javascript; charset=utf-8");
   httpd_resp_set_hdr(req, "Cache-Control", "public, max-age=31536000, immutable");
