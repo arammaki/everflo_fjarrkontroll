@@ -81,6 +81,10 @@
     <label>AX1 <input id="bAX1" type="number" inputmode="numeric"></label>
     <label>AX2 <input id="bAX2" type="number" inputmode="numeric"></label>
   </div>
+  <div class="row">
+    <label>Lutning <input id="bTilt" type="number" step="0.1" placeholder="auto"
+           inputmode="decimal"> grader</label>
+  </div>
   <p class="hint" id="bandhint" style="text-align:left"></p>
 </details>
 
@@ -273,7 +277,9 @@ function loadRef(){
 }
 
 /* ---------- analysis ---------- */
-function analyze(imgData){
+/* forceTilt overrides the per-frame search — the control panel offers it so
+   a human who can see the tube can beat a correlation objective. */
+function analyze(imgData, forceTilt){
   const ff=flatfield(toGray(imgData));
 
   // Horizontal registration FIRST. The camera slides sideways (measured 34 px
@@ -288,7 +294,8 @@ function analyze(imgData){
   // it measures how well the scene matches and cannot be gamed by the ball
   // detector downstream, the way optimising for a clean peak could.
   let hy=null, tilt=0;
-  for(const t of TILTS){
+  const candidates = (typeof forceTilt==='number') ? [forceTilt] : TILTS;
+  for(const t of candidates){
     const h=align(centre(bandProfile(ff,AX1+xo,AX2+xo,t)), REF.anchor, SEARCH, 40, 600);
     if(!hy || h.quality>hy.quality){ hy=h; tilt=t; }
   }
@@ -431,7 +438,7 @@ function fetchFrame(){
 }
 function runFrame(){
   if(!REF){ document.getElementById('status').textContent='Referensbilden är inte inläst än.'; return; }
-  const r=analyze(ctx.getImageData(0,0,480,640));
+  const r=analyze(ctx.getImageData(0,0,480,640), forcedTilt());
   const b=judge(r);
   update(r,b);
   drawBands(r);
@@ -518,19 +525,28 @@ async function motor(op,n){
 /* Band overlay. Purely a visual aid: the engine reads the bands compiled
    into balldetector.js, so these boxes are for finding the numbers to put
    there after the camera has moved — not a live override. */
-const BAND_KEYS=['bXL','bXR','bAX1','bAX2'];
-const bandDefaults={bXL:XL,bXR:XR,bAX1:AX1,bAX2:AX2};
+const BAND_KEYS=['bXL','bXR','bAX1','bAX2','bTilt'];
+const bandDefaults={bXL:XL,bXR:XR,bAX1:AX1,bAX2:AX2,bTilt:''};
 function initBands(){
   for(const k of BAND_KEYS){
     const el=document.getElementById(k);
     let v=null;
     try{ v=localStorage.getItem('ev_'+k); }catch(e){}
     el.value = v!==null ? v : bandDefaults[k];
+    if(k==='bTilt' && el.value==='') el.value='';
     el.onchange=()=>{ try{ localStorage.setItem('ev_'+k, el.value); }catch(e){} };
   }
 }
 const bandVal=k=>{const v=parseInt(document.getElementById(k).value,10);
   return Number.isFinite(v)?v:bandDefaults[k];};
+/* Blank means let the engine search. A number is degrees, converted to the
+   tangent the engine works in. */
+function forcedTilt(){
+  const raw=document.getElementById('bTilt');
+  if(!raw || raw.value.trim()==='') return undefined;
+  const deg=parseFloat(raw.value);
+  return Number.isFinite(deg) ? Math.tan(deg*Math.PI/180) : undefined;
+}
 function drawBands(r){
   if(!document.getElementById('bands').open) return;
   const dx=r?r.dx:0, t=r?r.tilt:0;
@@ -552,7 +568,8 @@ function drawBands(r){
   const h=document.getElementById('bandhint');
   h.textContent = r
     ? `Uppmätt: ${r.dx.toFixed(1)} px i sidled, ${r.dy.toFixed(1)} i höjd, `+
-      `${(r.tilt*57.3).toFixed(1)}° lutning. Rutorna visar var motorn läser — `+
+      `${(r.tilt*57.3).toFixed(1)}° lutning${forcedTilt()===undefined?' (auto)':' (styrd)'}. `+
+      `Rutorna visar var motorn läser — `+
       `de följer skiftet automatiskt. Blir skiftet permanent, för in `+
       `XL=${Math.round(XL+r.dx)}, XR=${Math.round(XR+r.dx)}, `+
       `AX1=${Math.round(AX1+r.dx)}, AX2=${Math.round(AX2+r.dx)} i balldetector.js `+
@@ -577,5 +594,8 @@ function saveImage(){
 function copyLog(){ navigator.clipboard.writeText(document.getElementById('log').value); }
 
 initBands();
-loadRef();
+// Autostart: the host field remembers the last address and defaults to
+// syrgas.local, so there is nothing to type. Press Starta to reconnect
+// after changing it.
+loadRef().then(()=>start());
 </script></body></html>

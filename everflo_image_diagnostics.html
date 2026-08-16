@@ -273,7 +273,9 @@ function loadRef(){
 }
 
 /* ---------- analysis ---------- */
-function analyze(imgData){
+/* forceTilt overrides the per-frame search — the control panel offers it so
+   a human who can see the tube can beat a correlation objective. */
+function analyze(imgData, forceTilt){
   const ff=flatfield(toGray(imgData));
 
   // Horizontal registration FIRST. The camera slides sideways (measured 34 px
@@ -288,7 +290,8 @@ function analyze(imgData){
   // it measures how well the scene matches and cannot be gamed by the ball
   // detector downstream, the way optimising for a clean peak could.
   let hy=null, tilt=0;
-  for(const t of TILTS){
+  const candidates = (typeof forceTilt==='number') ? [forceTilt] : TILTS;
+  for(const t of candidates){
     const h=align(centre(bandProfile(ff,AX1+xo,AX2+xo,t)), REF.anchor, SEARCH, 40, 600);
     if(!hy || h.quality>hy.quality){ hy=h; tilt=t; }
   }
