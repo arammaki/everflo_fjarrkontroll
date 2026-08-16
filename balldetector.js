@@ -109,9 +109,19 @@ function bandProfile(ff,x1,x2,tilt){
   }
   return p;
 }
+/* Column profile of vertical EDGE energy, not mean brightness. The scale
+   ticks and the tube walls are edges and stay put; mean brightness is
+   dominated by shadows and reflections, which move with the light. Measured
+   2026-08-16 on the same frame: edges matched the reference at 8 px with
+   quality 0.90, brightness saturated the search at 60 px with quality 0.14
+   and dragged the bands right off the tube. */
 function colProfile(ff,y1,y2){
   const p=new Float32Array(W), n=y2-y1;
-  for(let x=0;x<W;x++){ let s=0; for(let y=y1;y<y2;y++) s+=ff[y*W+x]; p[x]=s/n; }
+  for(let x=0;x<W;x++){
+    let s=0;
+    for(let y=y1+1;y<y2;y++) s+=Math.abs(ff[y*W+x]-ff[(y-1)*W+x]);
+    p[x]=s/n;
+  }
   return p;
 }
 /* Shared 1D alignment: best integer shift by cross-correlation, refined to
@@ -169,16 +179,21 @@ function loadRef(){
 }
 
 /* ---------- analysis ---------- */
-/* forceTilt overrides the per-frame search — the control panel offers it so
-   a human who can see the tube can beat a correlation objective. */
-function analyze(imgData, forceTilt){
+/* opts overrides what the registration would otherwise measure: {dx, tilt}.
+   The control panel offers both, because a human who can see the tube beats
+   a correlation objective — and when the scene has changed enough that the
+   correlation finds no good match at all, it beats it by a mile. */
+function analyze(imgData, opts){
+  const forceTilt = opts && typeof opts.tilt==='number' ? opts.tilt : undefined;
+  const forceDx   = opts && typeof opts.dx  ==='number' ? opts.dx   : undefined;
   const ff=flatfield(toGray(imgData));
 
   // Horizontal registration FIRST. The camera slides sideways (measured 34 px
   // on 2026-08-16) and everything below samples fixed x bands, so without
   // this the anchor band lands on the housing and dy is meaningless.
   const hx=align(centre(colProfile(ff,RY1,RY2)), REF.anchorX, SEARCH, 60, 420);
-  const dx=hx.shift, regx=hx.quality, xo=Math.round(dx);
+  const dx=forceDx!==undefined ? forceDx : hx.shift;
+  const regx=hx.quality, xo=Math.round(dx);
 
   // Tilt, then vertical registration. Both come out of the same search: the
   // tilt that makes the scale ticks match the reference best is the one the

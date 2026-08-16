@@ -72,16 +72,13 @@
 </div>
 <details id="bands">
   <summary>Analysband</summary>
-  <p class="hint" style="text-align:left">Rutorna visar var motorn läser. Grön = bollbandet,
-  blå = ankarbandet för registrering. Ändra tills de sitter rätt på röret och för in
-  värdena i <code>balldetector.js</code>.</p>
+  <p class="hint" style="text-align:left">Rutorna visar var motorn faktiskt läser.
+  Tomma fält = motorn mäter själv. Sitter rutorna fel kan du tvinga skift och lutning
+  tills de ligger på röret — då ser du om avläsningen blir rimlig, men värdet är bara
+  pålitligt om kameran står i kalibreringens läge.</p>
   <div class="row">
-    <label>XL <input id="bXL" type="number" inputmode="numeric"></label>
-    <label>XR <input id="bXR" type="number" inputmode="numeric"></label>
-    <label>AX1 <input id="bAX1" type="number" inputmode="numeric"></label>
-    <label>AX2 <input id="bAX2" type="number" inputmode="numeric"></label>
-  </div>
-  <div class="row">
+    <label>Skift <input id="bDx" type="number" step="1" placeholder="auto"
+           inputmode="numeric"> px</label>
     <label>Lutning <input id="bTilt" type="number" step="0.1" placeholder="auto"
            inputmode="decimal"> grader</label>
   </div>
@@ -217,9 +214,19 @@ function bandProfile(ff,x1,x2,tilt){
   }
   return p;
 }
+/* Column profile of vertical EDGE energy, not mean brightness. The scale
+   ticks and the tube walls are edges and stay put; mean brightness is
+   dominated by shadows and reflections, which move with the light. Measured
+   2026-08-16 on the same frame: edges matched the reference at 8 px with
+   quality 0.90, brightness saturated the search at 60 px with quality 0.14
+   and dragged the bands right off the tube. */
 function colProfile(ff,y1,y2){
   const p=new Float32Array(W), n=y2-y1;
-  for(let x=0;x<W;x++){ let s=0; for(let y=y1;y<y2;y++) s+=ff[y*W+x]; p[x]=s/n; }
+  for(let x=0;x<W;x++){
+    let s=0;
+    for(let y=y1+1;y<y2;y++) s+=Math.abs(ff[y*W+x]-ff[(y-1)*W+x]);
+    p[x]=s/n;
+  }
   return p;
 }
 /* Shared 1D alignment: best integer shift by cross-correlation, refined to
@@ -277,16 +284,21 @@ function loadRef(){
 }
 
 /* ---------- analysis ---------- */
-/* forceTilt overrides the per-frame search — the control panel offers it so
-   a human who can see the tube can beat a correlation objective. */
-function analyze(imgData, forceTilt){
+/* opts overrides what the registration would otherwise measure: {dx, tilt}.
+   The control panel offers both, because a human who can see the tube beats
+   a correlation objective — and when the scene has changed enough that the
+   correlation finds no good match at all, it beats it by a mile. */
+function analyze(imgData, opts){
+  const forceTilt = opts && typeof opts.tilt==='number' ? opts.tilt : undefined;
+  const forceDx   = opts && typeof opts.dx  ==='number' ? opts.dx   : undefined;
   const ff=flatfield(toGray(imgData));
 
   // Horizontal registration FIRST. The camera slides sideways (measured 34 px
   // on 2026-08-16) and everything below samples fixed x bands, so without
   // this the anchor band lands on the housing and dy is meaningless.
   const hx=align(centre(colProfile(ff,RY1,RY2)), REF.anchorX, SEARCH, 60, 420);
-  const dx=hx.shift, regx=hx.quality, xo=Math.round(dx);
+  const dx=forceDx!==undefined ? forceDx : hx.shift;
+  const regx=hx.quality, xo=Math.round(dx);
 
   // Tilt, then vertical registration. Both come out of the same search: the
   // tilt that makes the scale ticks match the reference best is the one the
@@ -438,7 +450,7 @@ function fetchFrame(){
 }
 function runFrame(){
   if(!REF){ document.getElementById('status').textContent='Referensbilden är inte inläst än.'; return; }
-  const r=analyze(ctx.getImageData(0,0,480,640), forcedTilt());
+  const r=analyze(ctx.getImageData(0,0,480,640), overrides());
   const b=judge(r);
   update(r,b);
   drawBands(r);
@@ -525,8 +537,8 @@ async function motor(op,n){
 /* Band overlay. Purely a visual aid: the engine reads the bands compiled
    into balldetector.js, so these boxes are for finding the numbers to put
    there after the camera has moved — not a live override. */
-const BAND_KEYS=['bXL','bXR','bAX1','bAX2','bTilt'];
-const bandDefaults={bXL:XL,bXR:XR,bAX1:AX1,bAX2:AX2,bTilt:''};
+const BAND_KEYS=['bDx','bTilt'];
+const bandDefaults={bDx:'',bTilt:''};
 function initBands(){
   for(const k of BAND_KEYS){
     const el=document.getElementById(k);
@@ -537,15 +549,17 @@ function initBands(){
     el.onchange=()=>{ try{ localStorage.setItem('ev_'+k, el.value); }catch(e){} };
   }
 }
-const bandVal=k=>{const v=parseInt(document.getElementById(k).value,10);
-  return Number.isFinite(v)?v:bandDefaults[k];};
+
 /* Blank means let the engine search. A number is degrees, converted to the
    tangent the engine works in. */
-function forcedTilt(){
-  const raw=document.getElementById('bTilt');
-  if(!raw || raw.value.trim()==='') return undefined;
-  const deg=parseFloat(raw.value);
-  return Number.isFinite(deg) ? Math.tan(deg*Math.PI/180) : undefined;
+/* Blank means let the engine measure it. */
+function overrides(){
+  const o={};
+  const t=document.getElementById('bTilt').value.trim();
+  if(t!==''){ const d=parseFloat(t); if(Number.isFinite(d)) o.tilt=Math.tan(d*Math.PI/180); }
+  const x=document.getElementById('bDx').value.trim();
+  if(x!==''){ const d=parseInt(x,10); if(Number.isFinite(d)) o.dx=d; }
+  return o;
 }
 function drawBands(r){
   if(!document.getElementById('bands').open) return;
@@ -563,12 +577,12 @@ function drawBands(r){
     ctx.lineTo(x1+dx+sx(YBOT), YBOT);
     ctx.closePath(); ctx.stroke();
   };
-  box(bandVal('bXL'), bandVal('bXR'), '#00e676');   // ball band
-  box(bandVal('bAX1'), bandVal('bAX2'), '#4aa3ff'); // anchor band
+  box(XL, XR, '#00e676');    // ball band, where the engine reads it
+  box(AX1, AX2, '#4aa3ff');  // anchor band
   const h=document.getElementById('bandhint');
   h.textContent = r
     ? `Uppmätt: ${r.dx.toFixed(1)} px i sidled, ${r.dy.toFixed(1)} i höjd, `+
-      `${(r.tilt*57.3).toFixed(1)}° lutning${forcedTilt()===undefined?' (auto)':' (styrd)'}. `+
+      `${(r.tilt*57.3).toFixed(1)}° lutning. `+
       `Rutorna visar var motorn läser — `+
       `de följer skiftet automatiskt. Blir skiftet permanent, för in `+
       `XL=${Math.round(XL+r.dx)}, XR=${Math.round(XR+r.dx)}, `+
