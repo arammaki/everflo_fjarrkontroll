@@ -32,6 +32,7 @@
 #include <HTTPClient.h>
 #include <WiFiManager.h>          // tzapu – captive portal
 #include <ESPmDNS.h>
+#include <ArduinoOTA.h>
 #include <Preferences.h>
 #include "esp_http_server.h"
 #include "esp_log.h"
@@ -51,8 +52,11 @@
 #ifndef INGEST_TOKEN
   #define INGEST_TOKEN ""
 #endif
+#ifndef OTA_PASSWORD
+  #define OTA_PASSWORD ""         // empty = OTA disabled, and it stays disabled
+#endif                            // rather than open. See otaInit().
 
-#define FW_VERSION "1.9.1"
+#define FW_VERSION "1.9.2"
 
 /* ---------------- MOTOR ---------------- */
 #define USE_TMC_UART 0            // 1 = current control + true freewheel over UART
@@ -194,10 +198,15 @@ void motorStep(int direction, int degrees) {
 volatile unsigned long lastPressAt = 0;
 volatile bool uploadAfterPress = false;
 volatile int lastPressDegrees = 0;   // signed: what the knob was actually turned
+volatile bool otaActive = false;     // an over-the-air update is in progress
 
 /* Move + store position (the counter is information, not a limit) */
 bool move(int direction, int degrees) {
-  if (busy) return false;
+  // otaActive, not just busy: the press handlers run on the web server's task,
+  // so a button pressed during an update would otherwise turn the knob while
+  // the app partition is being rewritten. loop() withholds ArduinoOTA.handle()
+  // while the motor moves; this is the other half of that interlock.
+  if (busy || otaActive) return false;
   int next = position + direction;
   busy = true;
   motorEngage();
@@ -737,6 +746,81 @@ void wifiWatchdog() {
 /* ============================================================
  *  SETUP / LOOP
  * ============================================================ */
+/* ============================================================
+ *  OVER-THE-AIR UPDATE
+ *
+ *  Flash over her wifi instead of over USB. The unit lives at the patient's
+ *  home, so every avoided cable is an avoided trip — but read the limits:
+ *
+ *  - LAN only. espota talks to the device directly, so the laptop has to be
+ *    on the same network. This removes the cable from a visit; it does not
+ *    remove the visit. Updating from somewhere else needs the device to pull
+ *    a build from the cloud, which is a different design and a bigger one.
+ *  - No rollback. The Arduino core does not enable the bootloader's rollback
+ *    partition check, so a firmware that boots badly cannot fall back on its
+ *    own — that still takes USB. What makes this acceptable here is that the
+ *    concentrator does not depend on the ESP32 at all: the driver idles
+ *    disabled, the knob turns by hand, and a bricked unit costs the remote
+ *    control, not the oxygen.
+ *  - Never automatic. The device only ever accepts an update that a human
+ *    pushed to it. It does not look for one, and must not be made to.
+ *
+ *  The password is required, not optional: this opens a port that can replace
+ *  the firmware driving a motor attached to medical equipment, and "only
+ *  people on her wifi" is not an access policy. With no password compiled in,
+ *  OTA stays off rather than open. Same caveat as the other secrets — it sits
+ *  in the image and esptool can read it back, so it defends against the
+ *  network, not against someone holding the device.
+ * ============================================================ */
+const uint16_t OTA_PORT = 3232;
+
+void otaInit() {
+  if (!strlen(OTA_PASSWORD)) {
+    logLine("OTA: off (no password in secrets.h)");
+    return;
+  }
+  ArduinoOTA.setHostname("syrgas");
+  ArduinoOTA.setPassword(OTA_PASSWORD);
+  // mDNS is already running from setup(); ArduinoOTA.begin() would call
+  // MDNS.begin() a second time, which fails with "already initialized" and
+  // logs an error that looks like a fault. Advertise the service by hand
+  // instead — that record is what makes the IDE list syrgas as a network port.
+  ArduinoOTA.setMdnsEnabled(false);
+
+  ArduinoOTA.onStart([]() {
+    // Runs before the download connects and long before anything is written to
+    // flash, so this is where the two tasks are brought to a stop. Setting the
+    // flag shuts the door on new presses; the wait lets one that squeezed
+    // through move()'s check a moment earlier finish turning first. A press is
+    // a second or two, so the ceiling is never reached in practice — it is
+    // there so a wedged move cannot hold the update forever.
+    otaActive = true;
+    for (int i = 0; i < 100 && busy; i++) delay(50);   // <= 5 s
+    motorRelease();               // iron rule 4: never energised outside a move
+    logLine(busy ? "OTA: update starting, motor did NOT finish - released anyway"
+                 : "OTA: update starting, motor released");
+  });
+  ArduinoOTA.onEnd([]() {
+    logLine("OTA: written, restarting into the new firmware");
+  });
+  ArduinoOTA.onError([](ota_error_t e) {
+    // A failed update leaves the running firmware untouched, so the honest
+    // thing is to go back to normal service rather than sit in a half state.
+    otaActive = false;
+    motorRelease();
+    logLine(String("OTA: FAILED (") +
+            (e == OTA_AUTH_ERROR    ? "wrong password"
+           : e == OTA_BEGIN_ERROR   ? "could not start"
+           : e == OTA_CONNECT_ERROR ? "connection lost"
+           : e == OTA_RECEIVE_ERROR ? "receive failed"
+           : e == OTA_END_ERROR     ? "could not finish"
+                                    : "unknown") + "), still on v" FW_VERSION);
+  });
+  ArduinoOTA.begin();
+  MDNS.enableArduino(OTA_PORT, true);   // true = advertise that auth is required
+  logLine("OTA: on, syrgas.local:" + String(OTA_PORT) + " (password required)");
+}
+
 void setup() {
   Serial.begin(115200);
   delay(300);
@@ -771,7 +855,14 @@ void setup() {
   }
   logLine(String("Connected! IP: ") + WiFi.localIP().toString());
 
-  if (MDNS.begin("syrgas")) Serial.println("Address: http://syrgas.local");
+  bool mdnsOK = MDNS.begin("syrgas");
+  if (mdnsOK) Serial.println("Address: http://syrgas.local");
+
+  // After MDNS.begin: otaInit() registers the _arduino._tcp record on it.
+  // Without mDNS the update still works, but only by IP — the IDE's port list
+  // is mDNS, so say so rather than let it look broken.
+  if (mdnsOK) otaInit();
+  else logLine("OTA: off (mDNS failed, so the IDE cannot discover the device)");
 
   startWebServer();
   Serial.println("Web page: port 80, stream: port 81");
@@ -800,7 +891,12 @@ void setup() {
 void loop() {
   wifiWatchdog();
 
-  bool online = !busy && WiFi.status() == WL_CONNECTED;
+  // Not while the knob is turning: move() runs on the web server's task and
+  // blocks there, so this is the only point where the two can be separated.
+  // handle() returns immediately when no update is in flight.
+  if (!busy) ArduinoOTA.handle();
+
+  bool online = !busy && !otaActive && WiFi.status() == WL_CONNECTED;
 
   if (online && millis() - lastPing > PING_INTERVAL_MS) {
     lastPing = millis();                 // reset first: a failed camera must

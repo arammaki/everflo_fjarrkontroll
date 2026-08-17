@@ -399,13 +399,45 @@ the Playwright suite that does leave-one-out lives outside it too.
 
 ### Deployment safety
 The system will run live at a patient's home (not yet deployed).
-Never auto-flash or trigger OTA; flash manually on-site, keeping the
-previous firmware as fallback. Current UI needs only `/bild` +
+**Never automatic.** An update happens only because a human pushed one; the
+device must never look for a build and install it on its own. That rule is
+older than OTA and survives it — see "Over-the-air update" below for how each
+mechanism keeps it. Keep the previous firmware as a fallback: there is no
+bootloader rollback, so a bad image is recovered over USB. Current UI needs
+only `/bild` +
 `/api/plus|minus` (stable since v1.6.6). `/api/steg?v=N` (implemented
 in v1.7.0) adds adjustable step size: clamped in firmware to compiled
 4–180°/press, RAM only, reverts to default 39°/press on reboot. The
 control panel exposes it as a free number field and shows the value the
 firmware actually applied after clamping.
+
+### Over-the-air update (v1.9.2)
+ArduinoOTA on port 3232, hostname `syrgas`, so the unit shows up as a network
+port in the Arduino IDE. Password-required: `OTA_PASSWORD` in `secrets.h`, and
+with no password compiled in OTA stays **off** rather than open. This port can
+replace the firmware driving a motor bolted to an oxygen concentrator, so
+"whoever is on her wifi" is not an access policy. Same caveat as the other
+secrets — esptool can read the password back out of the image, so it defends
+against the network, not against someone holding the device.
+
+Two interlocks, and both halves are needed because `move()` runs on the web
+server's task while `ArduinoOTA.handle()` runs in `loop()`: `loop()` withholds
+`handle()` while `busy`, and `move()` refuses while `otaActive`. Without the
+second, a button pressed mid-update turns the knob while the app partition is
+being rewritten.
+
+`ArduinoOTA.setMdnsEnabled(false)` is deliberate. mDNS is already up from
+`setup()`, and `ArduinoOTA.begin()` would call `MDNS.begin()` a second time,
+which fails with "already initialized" and logs what looks like a fault. The
+`_arduino._tcp` record is registered by hand instead — that record is what puts
+the device in the IDE's port list.
+
+**LAN only.** espota talks to the device directly, so this removes the cable
+from a visit, not the visit. No bootloader rollback either: the Arduino core
+does not enable it, so a firmware that boots badly still needs USB. What makes
+that acceptable is that the concentrator does not depend on the ESP32 at all —
+the driver idles disabled, the knob turns by hand, and a bricked unit costs the
+remote control, not the oxygen.
 
 ## Wishlist / backlog
 - Share one frame between simultaneous `/bild` viewers. Today every request
@@ -420,4 +452,4 @@ firmware actually applied after clamping.
   and a cache is a deliberately stale frame in a system whose whole point
   is that the image is current.
 - `/api/glomwifi` (force portal without physical access)
-- ArduinoOTA (flash over wifi — unit will live at my mother's)
+- Cloud-pull OTA (update from anywhere, not just her LAN) — see below
