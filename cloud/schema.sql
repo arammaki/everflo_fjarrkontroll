@@ -56,6 +56,34 @@ CREATE TABLE IF NOT EXISTS analyses (
 );
 CREATE INDEX IF NOT EXISTS analyses_engine ON analyses (engine);
 
+-- Firmware builds the device may install over the air, from anywhere.
+--
+-- `armed_at` is the whole safety model. A build sitting here is inert: the
+-- device is told about it only once a human has armed it, with a second
+-- deliberate command. That keeps the rule the project had before OTA existed
+-- — an update happens because a person pushed one, never because the device
+-- went looking. Publishing and arming are separate on purpose; a single
+-- "deploy" verb would make the dangerous thing the easy thing.
+--
+-- The ingest handler clears armed_at as soon as a reading arrives reporting
+-- that version, so "armed" means "waiting to land" and never lingers as a
+-- standing invitation.
+--
+-- md5 is what the device verifies the download against, and is the header
+-- name HTTPUpdate looks for (x-MD5). Not a signature: it catches a corrupted
+-- transfer, not a malicious one. Anyone who can write this table or the R2
+-- object owns the device.
+CREATE TABLE IF NOT EXISTS firmware (
+  version     TEXT PRIMARY KEY,   -- must equal the FW_VERSION compiled in
+  r2_key      TEXT NOT NULL,
+  md5         TEXT NOT NULL,
+  size        INTEGER NOT NULL,
+  uploaded_at TEXT NOT NULL,
+  armed_at    TEXT                -- NULL = inert. Exactly one row may be armed.
+);
+CREATE UNIQUE INDEX IF NOT EXISTS firmware_one_armed
+  ON firmware ((1)) WHERE armed_at IS NOT NULL;
+
 -- Added 2026-08-16 for existing databases:
 --   ALTER TABLE readings ADD COLUMN press_degrees INTEGER;
 --   (the analyses table below is created by running this file again)

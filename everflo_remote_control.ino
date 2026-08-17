@@ -33,6 +33,7 @@
 #include <WiFiManager.h>          // tzapu – captive portal
 #include <ESPmDNS.h>
 #include <ArduinoOTA.h>
+#include <HTTPUpdate.h>
 #include <Preferences.h>
 #include "esp_http_server.h"
 #include "esp_log.h"
@@ -56,7 +57,7 @@
   #define OTA_PASSWORD ""         // empty = OTA disabled, and it stays disabled
 #endif                            // rather than open. See otaInit().
 
-#define FW_VERSION "1.9.2"
+#define FW_VERSION "1.9.3"
 
 /* ---------------- MOTOR ---------------- */
 #define USE_TMC_UART 0            // 1 = current control + true freewheel over UART
@@ -662,6 +663,12 @@ bool pingHealth() {
 #define PRESS_SETTLE_MS      5000UL   // quiet time that ends a press series
 unsigned long lastUpload = 0;
 
+// How often the device asks whether a human has armed a firmware build. Same
+// 15 minutes as the upload: nothing is waiting for it, and a tighter poll
+// would only spend her bandwidth on a question that is almost always "no".
+#define FW_CHECK_INTERVAL_MS 900000UL
+unsigned long lastFwCheck = 0;
+
 /* Blocks for a few seconds. Same reasoning as pingHealth(): the web server
    has its own task, so only the heartbeat pauses. */
 bool uploadFrame(const char *reason) {
@@ -821,6 +828,90 @@ void otaInit() {
   logLine("OTA: on, syrgas.local:" + String(OTA_PORT) + " (password required)");
 }
 
+/* ---------- cloud-pull OTA ----------
+   The other half of the story above: this one works from anywhere, because
+   the device fetches instead of being pushed to. The rule it must not break
+   is that an update still happens only because a human decided so, and the
+   cloud keeps that — a published build is inert until someone arms it with a
+   separate command, and the device is told nothing until then. It never
+   chooses to update; it asks whether a person has left one waiting.
+
+   Recovery is unchanged and unglamorous: there is no bootloader rollback, so
+   a firmware that does not boot is fixed over USB, at her home. Arm only a
+   build that has already been seen to boot. See tools/publish_firmware.mjs.
+
+   The MD5 is checked by HTTPUpdate against the x-MD5 header. That catches a
+   corrupted download, not a hostile one — anyone who can write the R2 object
+   or the D1 row owns this device. TLS is unverified here for the same reason
+   as everywhere else in this sketch, which means the token is what stands
+   between the internet and the firmware. */
+String cloudUrl(const char* path) {
+  String base = INGEST_URL;
+  int i = base.lastIndexOf("/ingest");     // the only endpoint in the URL
+  if (i > 0) base = base.substring(0, i);
+  return base + path;
+}
+
+void checkFirmware() {
+  if (!strlen(INGEST_URL) || !strlen(INGEST_TOKEN)) return;
+  if (busy || otaActive) return;
+
+  // The ask lives in its own scope so its TLS session is torn down before the
+  // download opens a second one. A WiFiClientSecure holds tens of kB of heap,
+  // and two of them alive at once on a device that also owns a camera is how
+  // an update fails at the last moment, on the unit, out of reach.
+  String ver;
+  {
+    WiFiClientSecure client;
+    client.setInsecure();                  // see pingHealth() for why
+    HTTPClient http;
+    if (!http.begin(client, cloudUrl("/firmware") + "?fw=" FW_VERSION)) return;
+    http.setConnectTimeout(5000);
+    http.setTimeout(10000);
+    http.addHeader("authorization", "Bearer " INGEST_TOKEN);
+    int code = http.GET();
+    // 204 is the normal answer and means "nothing armed", or "what is armed is
+    // what you are already running". Anything else is silence by design: a
+    // failed check must cost nothing, it runs every 15 minutes forever.
+    String body = (code == 200) ? http.getString() : String();
+    http.end();
+    if (code != 200) return;
+
+    int a = body.indexOf("\"version\":\"");
+    if (a < 0) return;
+    a += 11;
+    int b = body.indexOf('"', a);
+    if (b < 0) return;
+    ver = body.substring(a, b);
+  }
+  if (ver.length() == 0 || ver.length() > 16 || ver == FW_VERSION) return;
+
+  logLine("Cloud OTA: v" + ver + " is armed, installing (running v" FW_VERSION ")");
+
+  // Same interlock as ArduinoOTA: shut the door on new presses, then let one
+  // already in flight finish before anything touches flash.
+  otaActive = true;
+  for (int i = 0; i < 100 && busy; i++) delay(50);   // <= 5 s
+  motorRelease();
+
+  WiFiClientSecure dl;
+  dl.setInsecure();
+  HTTPUpdate updater(30000);        // per-read timeout; 1.4 MB over a weak link
+  updater.rebootOnUpdate(true);
+  updater.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
+  t_httpUpdate_return r = updater.update(
+      dl, cloudUrl("/firmware.bin") + "?v=" + ver, "",
+      [](HTTPClient* h) { h->addHeader("authorization", "Bearer " INGEST_TOKEN); });
+
+  // Only reached when it did NOT reboot, so every path here is a failure and
+  // the running firmware is untouched. Back to normal service: refusing to
+  // move the knob because an update failed hours ago would be the worse bug.
+  otaActive = false;
+  logLine(String("Cloud OTA: FAILED (") +
+          (r == HTTP_UPDATE_NO_UPDATES ? "server had nothing" : updater.getLastErrorString()) +
+          "), still on v" FW_VERSION);
+}
+
 void setup() {
   Serial.begin(115200);
   delay(300);
@@ -874,6 +965,11 @@ void setup() {
 
   lastPing = millis();
   lastUpload = millis();
+  // Not zero: a device stuck in a boot loop would otherwise ask for an update
+  // within seconds of every boot, and the build it is offered is the one that
+  // is crashing it. A full interval of running first is the cheapest guard
+  // against an armed bad build turning into a loop that reinstalls itself.
+  lastFwCheck = millis();
   // The result of the first attempt is logged even on success. Everything
   // after this only logs failures, but on a first boot at the installation
   // site /log is the only way to see that the cloud path actually works —
@@ -912,6 +1008,15 @@ void loop() {
   } else if (online && millis() - lastUpload > UPLOAD_INTERVAL_MS) {
     lastUpload = millis();
     uploadFrame("periodic");
+  }
+
+  // Asks whether a human has armed a build. Never installs one it was not
+  // offered, and the offer only exists because a person made it. Deliberately
+  // after the upload branch: a reading is what she depends on, an update is
+  // convenience for me, and the reading goes first when both are due.
+  if (online && millis() - lastFwCheck > FW_CHECK_INTERVAL_MS) {
+    lastFwCheck = millis();
+    checkFirmware();
   }
 
   static bool on = false;

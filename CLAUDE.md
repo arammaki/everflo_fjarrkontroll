@@ -439,6 +439,56 @@ that acceptable is that the concentrator does not depend on the ESP32 at all —
 the driver idles disabled, the knob turns by hand, and a bricked unit costs the
 remote control, not the oxygen.
 
+### Cloud-pull OTA (v1.9.3) — update from anywhere
+The device asks the ingest Worker every 15 minutes whether a human has left a
+build waiting. It never pushes, and the device never chooses. Two verbs keep
+the old rule intact:
+
+```sh
+node tools/publish_firmware.mjs publish build/…/everflo_remote_control.ino.bin 1.9.3
+node tools/publish_firmware.mjs arm 1.9.3        # the separate, deliberate act
+node tools/publish_firmware.mjs status | disarm
+```
+
+Publishing is inert — the build sits in R2 and the device is told nothing.
+Arming is what lets a unit at a patient's home replace its own firmware, so it
+costs its own command. A single `deploy` verb would make the dangerous thing
+the easy thing. `firmware.armed_at` carries this, and a partial unique index
+(`firmware_one_armed`) makes "at most one armed build" a property of the
+database rather than of the tool that writes it.
+
+`arm` **is a production action**: the unit installs within 15 minutes and
+reboots. Only ever arm a build that has already been seen to boot over cable or
+ArduinoOTA — there is no rollback, and recovery is a trip with a USB cable.
+
+The loop closes on the device's own report: the ingest handler clears
+`armed_at` when a reading arrives carrying that version. So "armed" means
+"waiting to land", and a build that bricks the unit stays armed — correctly,
+because it never landed. `lastFwCheck` is seeded to `millis()` rather than 0 so
+a unit in a boot loop cannot ask for the build that is crashing it seconds
+after every boot.
+
+Endpoints (both bearer-token, same token as ingest): `GET /firmware?fw=<current>`
+answers 204 for "nothing armed" *and* for "what is armed is what you already
+run"; `GET /firmware.bin?v=<version>` streams it with `x-MD5`, which is the
+header HTTPUpdate verifies against, and 404s if that version is no longer the
+armed one. Content-length comes from the R2 object, never the D1 row — a
+disagreement between them would truncate the transfer before the MD5 was ever
+checked, so the Worker refuses with 500 instead.
+
+MD5 catches a corrupted download, not a hostile one. Whoever can write the R2
+object or the D1 row owns this device; TLS is unverified as everywhere else in
+the sketch, so the token is what stands between the internet and the firmware.
+Note the asymmetry that makes that tolerable: the device token can only *read*
+firmware. Arming needs Cloudflare credentials, not the token, so a leaked
+device token cannot install anything.
+
+Verified end to end 2026-08-17 without the device: publish-does-not-offer,
+arm-offers, never-offer-what-it-runs, 1.37 MB downloaded byte-identical to the
+local build with a matching `x-MD5`, 403 without a token, 404 on a stale
+version, and disarm-on-report. The synthetic reading used for the last one was
+deleted afterwards.
+
 ## Wishlist / backlog
 - Share one frame between simultaneous `/bild` viewers. Today every request
   calls `esp_camera_fb_get()`, so N viewers cost N captures and each sees a
@@ -452,4 +502,4 @@ remote control, not the oxygen.
   and a cache is a deliberately stale frame in a system whose whole point
   is that the image is current.
 - `/api/glomwifi` (force portal without physical access)
-- Cloud-pull OTA (update from anywhere, not just her LAN) — see below
+- ArduinoOTA and cloud-pull OTA both done (v1.9.2, v1.9.3) — see above

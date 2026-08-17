@@ -65,6 +65,54 @@ export default {
       return new Response('ok\n', { headers: { 'content-type': 'text/plain' } });
     }
 
+    /* --- Over-the-air update, pull side -------------------------------
+       The device asks; the cloud never pushes. And it is told about a build
+       only when a human has armed one, which is a separate command from
+       publishing it. See the firmware table in schema.sql. */
+    if (request.method === 'GET' && url.pathname === '/firmware') {
+      if (!authorized(request, env)) return new Response('forbidden', { status: 403 });
+      const row = await env.DB.prepare(
+        'SELECT version, md5, size FROM firmware WHERE armed_at IS NOT NULL LIMIT 1'
+      ).first();
+      // 204 also covers "the armed build is the one already running", so a
+      // device that has just updated is told nothing rather than told to
+      // install what it is already running.
+      if (!row || row.version === url.searchParams.get('fw')) {
+        return new Response(null, { status: 204 });
+      }
+      return new Response(JSON.stringify(row),
+        { headers: { 'content-type': 'application/json' } });
+    }
+
+    if (request.method === 'GET' && url.pathname === '/firmware.bin') {
+      if (!authorized(request, env)) return new Response('forbidden', { status: 403 });
+      // The version is required and must still be the armed one: disarming
+      // between the two requests must stop the download, not serve a build
+      // nobody is standing behind any more.
+      const row = await env.DB.prepare(
+        'SELECT r2_key, md5, size FROM firmware WHERE armed_at IS NOT NULL AND version = ?'
+      ).bind(url.searchParams.get('v') || '').first();
+      if (!row) return new Response('not armed', { status: 404 });
+      const object = await env.IMAGES.get(row.r2_key);
+      if (!object) return new Response('firmware object missing', { status: 404 });
+      // The length comes from the object, never from the row: a content-length
+      // that disagrees with the body truncates or hangs the transfer before
+      // the MD5 is ever checked, turning a bad publish into a mystery. If the
+      // two disagree the publish itself is inconsistent — refuse it loudly
+      // rather than hand a device something nobody can account for.
+      if (object.size !== row.size) {
+        return new Response('firmware size does not match the published record',
+                            { status: 500 });
+      }
+      return new Response(object.body, {
+        headers: {
+          'content-type': 'application/octet-stream',
+          'content-length': String(object.size),
+          'x-MD5': row.md5,            // the header HTTPUpdate verifies against
+        },
+      });
+    }
+
     if (url.pathname !== '/ingest') return new Response('not found', { status: 404 });
     if (request.method !== 'POST') {
       return new Response('method not allowed', { status: 405, headers: { allow: 'POST' } });
@@ -110,6 +158,18 @@ export default {
       intParam(url, 'rssi'),
       (url.searchParams.get('fw') || '').slice(0, 32) || null
     ).run();
+
+    /* An update that has landed is no longer pending. Disarming on the
+       device's own report — rather than when the download finished — means
+       "armed" ends only once the new firmware has actually booted and phoned
+       home, which is the event worth recording. A build that bricks the unit
+       therefore stays armed, and that is correct: it never landed. */
+    const fw = (url.searchParams.get('fw') || '').slice(0, 32);
+    if (fw) {
+      await env.DB.prepare(
+        'UPDATE firmware SET armed_at = NULL WHERE armed_at IS NOT NULL AND version = ?'
+      ).bind(fw).run();
+    }
 
     return new Response(null, { status: 204 });
   },
