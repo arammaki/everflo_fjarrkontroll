@@ -439,7 +439,7 @@ that acceptable is that the concentrator does not depend on the ESP32 at all —
 the driver idles disabled, the knob turns by hand, and a bricked unit costs the
 remote control, not the oxygen.
 
-### Cloud-pull OTA (v1.9.3) — update from anywhere
+### Cloud-pull OTA (v1.9.3, certificate pinned in v1.9.4) — update from anywhere
 The device asks the ingest Worker every 15 minutes whether a human has left a
 build waiting. It never pushes, and the device never chooses. Two verbs keep
 the old rule intact:
@@ -477,11 +477,25 @@ disagreement between them would truncate the transfer before the MD5 was ever
 checked, so the Worker refuses with 500 instead.
 
 MD5 catches a corrupted download, not a hostile one. Whoever can write the R2
-object or the D1 row owns this device; TLS is unverified as everywhere else in
-the sketch, so the token is what stands between the internet and the firmware.
-Note the asymmetry that makes that tolerable: the device token can only *read*
-firmware. Arming needs Cloudflare credentials, not the token, so a leaked
-device token cannot install anything.
+object or the D1 row owns this device. Note the asymmetry that limits the
+damage from the device's own credential: the token can only *read* firmware —
+arming needs Cloudflare credentials, so a leaked device token cannot install
+anything.
+
+**The firmware endpoints are the one place TLS is verified** (`cloud_roots.h`,
+added v1.9.4). Everywhere else in the sketch uses `setInsecure()`, which was a
+fair trade when a man-in-the-middle could at worst read a picture of a flow
+meter or collect a write-only token. It stops being fair when the same
+connection can hand the device its next firmware: unverified TLS plus OTA is
+remote code execution with extra steps, on hardware bolted to an oxygen
+concentrator. Both firmware requests therefore pin the roots the Worker's
+certificate actually chains to — GTS Root R4 (what Cloudflare issues from
+today) and ISRG Root X1 (because they rotate CAs and a rotation must not brick
+the update path). Verified against the live chain 2026-08-17. A move to a third
+CA makes verification fail and the update simply not happen, which is the safe
+direction, and ArduinoOTA over the LAN is still there to fix it.
+`cloud_roots.h` is generated from the macOS system trust store; the roots
+expire 2035 and 2036.
 
 Verified end to end 2026-08-17 without the device: publish-does-not-offer,
 arm-offers, never-offer-what-it-runs, 1.37 MB downloaded byte-identical to the

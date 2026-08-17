@@ -57,7 +57,7 @@
   #define OTA_PASSWORD ""         // empty = OTA disabled, and it stays disabled
 #endif                            // rather than open. See otaInit().
 
-#define FW_VERSION "1.9.3"
+#define FW_VERSION "1.9.4"
 
 /* ---------------- MOTOR ---------------- */
 #define USE_TMC_UART 0            // 1 = current control + true freewheel over UART
@@ -842,9 +842,24 @@ void otaInit() {
 
    The MD5 is checked by HTTPUpdate against the x-MD5 header. That catches a
    corrupted download, not a hostile one — anyone who can write the R2 object
-   or the D1 row owns this device. TLS is unverified here for the same reason
-   as everywhere else in this sketch, which means the token is what stands
-   between the internet and the firmware. */
+   or the D1 row owns this device.
+
+   THIS IS THE ONE PLACE THE CERTIFICATE IS VERIFIED. Everywhere else in this
+   sketch uses setInsecure(), and that was a fair trade when the worst a
+   man-in-the-middle could do was read a picture of a flow meter or collect a
+   token that can only write readings. It stops being fair the moment the same
+   connection can hand the device its next firmware: anyone able to intercept
+   it on her network could then run whatever they liked on hardware bolted to
+   an oxygen concentrator. Unverified TLS plus OTA is remote code execution
+   with extra steps.
+
+   So both firmware requests pin the roots the Worker's certificate actually
+   chains to (verified against the live chain 2026-08-17): GTS Root R4, which
+   Cloudflare currently issues from, and ISRG Root X1, because they rotate
+   between CAs and a rotation must not brick the update path. If they ever move
+   to a third CA, verification fails and the update simply does not happen —
+   the safe direction, and ArduinoOTA over the LAN is still there to fix it. */
+#include "cloud_roots.h"
 String cloudUrl(const char* path) {
   String base = INGEST_URL;
   int i = base.lastIndexOf("/ingest");     // the only endpoint in the URL
@@ -863,7 +878,7 @@ void checkFirmware() {
   String ver;
   {
     WiFiClientSecure client;
-    client.setInsecure();                  // see pingHealth() for why
+    client.setCACert(CLOUD_ROOT_CA);       // verified, unlike the rest — see above
     HTTPClient http;
     if (!http.begin(client, cloudUrl("/firmware") + "?fw=" FW_VERSION)) return;
     http.setConnectTimeout(5000);
@@ -895,7 +910,7 @@ void checkFirmware() {
   motorRelease();
 
   WiFiClientSecure dl;
-  dl.setInsecure();
+  dl.setCACert(CLOUD_ROOT_CA);      // the download above all must be authentic
   HTTPUpdate updater(30000);        // per-read timeout; 1.4 MB over a weak link
   updater.rebootOnUpdate(true);
   updater.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
