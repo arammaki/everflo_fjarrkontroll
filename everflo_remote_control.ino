@@ -57,7 +57,7 @@
   #define OTA_PASSWORD ""         // empty = OTA disabled, and it stays disabled
 #endif                            // rather than open. See otaInit().
 
-#define FW_VERSION "1.9.5"
+#define FW_VERSION "1.9.6"
 
 /* ---------------- MOTOR ---------------- */
 #define USE_TMC_UART 0            // 1 = current control + true freewheel over UART
@@ -781,6 +781,63 @@ void wifiWatchdog() {
  * ============================================================ */
 const uint16_t OTA_PORT = 3232;
 
+/* Give the update the whole machine.
+
+   Writing to flash on an ESP32 disables the cache and stalls every other task
+   while it happens. Meanwhile this device grabs camera frames continuously
+   (CAMERA_GRAB_WHEN_EMPTY never idles) and answers on two HTTP ports. The
+   first real ArduinoOTA attempt died at 9% with "receive failed": the incoming
+   TCP stream went quiet for longer than the receive timeout because nothing
+   was left to service it. Raising the timeout alone treats the symptom.
+
+   So both update paths stop the camera and both servers first. Nothing is lost
+   on success — the device reboots into the new firmware moments later. On
+   failure they come back, because the alternative is a unit sitting at a
+   patient's home with a dead camera because a download was interrupted. A
+   restart would also fix that, but rebooting on every failed attempt turns a
+   flaky network into a reboot loop once a cloud build is armed.
+
+   The order is load-bearing: servers first, camera last. h_snapshot and
+   h_stream touch the frame buffer from the server tasks, and httpd_stop()
+   blocks until a running handler returns — so by the time the camera is
+   deinitialised nobody is holding a frame. Deinitialising first would free
+   buffers out from under a request that is still being served. */
+void otaQuiesce() {
+  if (stream_httpd) { httpd_stop(stream_httpd); stream_httpd = NULL; }
+  if (ctrl_httpd)   { httpd_stop(ctrl_httpd);   ctrl_httpd   = NULL; }
+  if (cameraOK)     { esp_camera_deinit();      cameraOK     = false; }
+}
+
+/* Tears down before bringing up, so calling this twice is harmless.
+
+   That is not hypothetical. ArduinoOTA's connect-failure branch sets the state
+   and calls the error callback but does NOT return, so it falls through to the
+   end() check, fails there too, and calls the error callback a second time
+   with OTA_END_ERROR. Without the teardown the second call would run
+   cameraInit() on a live camera — esp_camera_init refuses, cameraInit returns
+   false, and cameraOK sticks at false. The camera would be physically fine
+   while /bild and every cloud upload stopped, and startWebServer() guards the
+   stream server behind cameraOK, so that would not come back either. Two
+   servers would meanwhile be started on ports already bound, leaking the
+   first pair. One failed connect, and the unit is blind until someone drives
+   over and power-cycles it. */
+void otaResume() {
+  otaQuiesce();
+  cameraOK = cameraInit();
+  if (!cameraOK) {
+    // Nothing here can fix a camera that will not come back, and a unit with
+    // no picture is a unit with no truth: the whole system rests on her being
+    // able to see the meter. Restarting is what wifiWatchdog() already does
+    // with a fault it cannot mend, and it costs ten seconds against sitting
+    // blind at her home until someone drives over.
+    logLine("OTA: CAMERA DID NOT RESTART - restarting the device");
+    delay(200);                   // let the line reach the serial console
+    ESP.restart();
+  }
+  startWebServer();
+  logLine("OTA: camera and web server back up");
+}
+
 void otaInit() {
   if (!strlen(OTA_PASSWORD)) {
     logLine("OTA: off (no password in secrets.h)");
@@ -794,6 +851,16 @@ void otaInit() {
   // instead — that record is what makes the IDE list syrgas as a network port.
   ArduinoOTA.setMdnsEnabled(false);
 
+  /* The receive loop waits this long for the next packet before it gives up
+     (three retries, then OTA_RECEIVE_ERROR). The library default is 1000 ms,
+     and 1 s turned out to be no budget at all here: an ESP32 flash write
+     disables the cache and stalls other tasks, and this device is also
+     grabbing camera frames continuously and running two HTTP servers. The
+     first real attempt died at 9% with exactly that error while the sender
+     saw a broken pipe. Five seconds costs nothing when the transfer is
+     healthy — the timeout is only reached when it is not. */
+  ArduinoOTA.setTimeout(5000);
+
   ArduinoOTA.onStart([]() {
     // Runs before the download connects and long before anything is written to
     // flash, so this is where the two tasks are brought to a stop. Setting the
@@ -806,6 +873,7 @@ void otaInit() {
     motorRelease();               // iron rule 4: never energised outside a move
     logLine(busy ? "OTA: update starting, motor did NOT finish - released anyway"
                  : "OTA: update starting, motor released");
+    otaQuiesce();                 // camera and servers off for the duration
   });
   ArduinoOTA.onEnd([]() {
     logLine("OTA: written, restarting into the new firmware");
@@ -815,6 +883,7 @@ void otaInit() {
     // thing is to go back to normal service rather than sit in a half state.
     otaActive = false;
     motorRelease();
+    otaResume();
     logLine(String("OTA: FAILED (") +
             (e == OTA_AUTH_ERROR    ? "wrong password"
            : e == OTA_BEGIN_ERROR   ? "could not start"
@@ -908,6 +977,7 @@ void checkFirmware() {
   otaActive = true;
   for (int i = 0; i < 100 && busy; i++) delay(50);   // <= 5 s
   motorRelease();
+  otaQuiesce();                   // camera and servers off for the duration
 
   WiFiClientSecure dl;
   dl.setCACert(CLOUD_ROOT_CA);      // the download above all must be authentic
@@ -922,6 +992,7 @@ void checkFirmware() {
   // the running firmware is untouched. Back to normal service: refusing to
   // move the knob because an update failed hours ago would be the worse bug.
   otaActive = false;
+  otaResume();
   logLine(String("Cloud OTA: FAILED (") +
           (r == HTTP_UPDATE_NO_UPDATES ? "server had nothing" : updater.getLastErrorString()) +
           "), still on v" FW_VERSION);

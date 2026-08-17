@@ -167,6 +167,12 @@ Single sketch `everflo_remote_control.ino`. Key pieces:
   Swedish and stays that way). They sit with the code, not with the patient.
 - `loop()` must stay non-blocking (heartbeat + wifiWatchdog + button debounce
   live there). No `delay()` in handlers beyond the existing brief ones.
+  Two deliberate exceptions, both updates: `ArduinoOTA.handle()` blocks for the
+  whole transfer once one starts, and `checkFirmware()` blocks for the whole
+  download. The heartbeat freezes and the watchdog pauses for that minute. It
+  is accepted because an update is a bounded, human-initiated act and the
+  device has nothing better to do — see the OTA sections. Do not copy the
+  pattern for anything periodic.
 - Backward compatibility: `/bild`, `/api/plus`, `/api/minus` are consumed
   by the companion `everflo_control_panel.html` (fire-and-forget no-cors)
   — do not rename or change semantics.
@@ -431,6 +437,19 @@ being rewritten.
 which fails with "already initialized" and logs what looks like a fault. The
 `_arduino._tcp` record is registered by hand instead — that record is what puts
 the device in the IDE's port list.
+
+**The update gets the whole machine** (v1.9.6). Both paths stop the camera and
+both HTTP servers before anything touches flash, and the receive timeout is
+raised from the library's 1000 ms to 5000 ms. The first real attempt died at 9%
+with "receive failed": a flash write on an ESP32 disables the cache and stalls
+every other task, and this device also grabs frames without ever idling and
+answers on two ports, so nothing was left to service the incoming stream.
+Order inside `otaQuiesce()` is load-bearing — servers first, camera last,
+because `httpd_stop()` blocks until a running handler returns and the reverse
+would free frame buffers under a request still being served. `otaResume()`
+tears down before bringing up so a double call is harmless, which matters
+because ArduinoOTA's connect-failure branch calls the error callback twice; and
+if the camera will not come back it restarts the device rather than sit blind.
 
 **LAN only.** espota talks to the device directly, so this removes the cable
 from a visit, not the visit. No bootloader rollback either: the Arduino core
