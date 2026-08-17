@@ -135,7 +135,8 @@ Single sketch `everflo_remote_control.ino`. Key pieces:
 ## Conventions
 
 - **Language split** (since 2026-08-15, was all-Swedish before):
-  - **English**: identifiers, comments, serial/`/log` messages.
+  - **English**: identifiers, comments, serial/`/log` messages, commit
+    messages (the last of these since 2026-08-17).
   - **Swedish**: every string the operator or patient reads — the device
     page, the control panel UI, the `judge()` reason texts. She does not
     read English. Never translate these.
@@ -161,7 +162,9 @@ Single sketch `everflo_remote_control.ino`. Key pieces:
   running it after a correct flash. That happened on 2026-08-16 — three
   recalibrations landed while the version stayed 1.8.9.
 - One focused change per commit; commit message style for firmware changes:
-  `v1.7.x: kort beskrivning`. No wholesale refactors.
+  `v1.7.x: short description`. No wholesale refactors.
+  **Commit messages are English** (since 2026-08-17; earlier history is
+  Swedish and stays that way). They sit with the code, not with the patient.
 - `loop()` must stay non-blocking (heartbeat + wifiWatchdog + button debounce
   live there). No `delay()` in handlers beyond the existing brief ones.
 - Backward compatibility: `/bild`, `/api/plus`, `/api/minus` are consumed
