@@ -120,6 +120,7 @@ function renderPage(rows, now) {
       data-vrid="${r.press_degrees == null ? '' : r.press_degrees}"
       data-lage="${r.position ?? ''}" data-rssi="${r.rssi ?? ''}"
       data-fw="${escapeHtml(r.fw ?? '')}">
+      <td class="num id">${r.id}</td>
       <td class="t">${escapeHtml(r.received_at.replace('T', ' ').slice(0, 19))}</td>
       <td>${escapeHtml(r.reason)}</td>
       <td class="num">${turn}</td>
@@ -174,6 +175,8 @@ function renderPage(rows, now) {
  tbody tr.sel{background:#dfe9e2;box-shadow:inset 3px 0 0 var(--ok)}
  td.num,td.avl{text-align:right;font-variant-numeric:tabular-nums}
  td.t{white-space:nowrap}
+ /* The id is a handle for talking about a row, not data — keep it quiet. */
+ td.id{color:var(--muted);width:1%;white-space:nowrap}
  td.avl{color:var(--muted)}
  td.avl.bad{color:var(--warn)} td.avl.good{color:var(--ok);font-weight:600}
  /* The historical reading is context, not the answer, so it sits back. */
@@ -211,7 +214,8 @@ betyder att en omkalibrering ändrat svaret för en bild som inte ändrats.</p>
 
 <div class="wrap">
 <table>
-<thead><tr><th>Tid (UTC)</th><th>Orsak</th><th>Vridning</th><th>RSSI</th>
+<thead><tr><th title="Radens id i databasen — samma nummer som i felsökning">#</th>
+<th>Tid (UTC)</th><th>Orsak</th><th>Vridning</th><th>RSSI</th>
 <th title="Äldsta värdet från en ANNAN motorversion. Tomt om bara en motor sett bilden.">Tidigare motor</th>
 <th title="Värdet från motorn som körs nu">Avläst</th></tr></thead>
 <tbody id="rows">
