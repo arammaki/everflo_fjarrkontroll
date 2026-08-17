@@ -139,7 +139,33 @@ summary{font-size:12px;color:var(--faint);cursor:pointer;letter-spacing:.06em;te
 const W=480, H=640;
 const XL=246, XR=278;      // the ball's travel band
 const AX1=222, AX2=250;    // anchor band (scale ticks) used for registration
-const YTOP=60, YBOT=610;   // valid search range
+/* Peak search range, in REFERENCE rows — dy is already removed when the
+   difference profile is built, so this window does not move with the camera.
+
+   It is the ball's PHYSICAL range plus clearance, not the picture's: the ball
+   cannot leave y 139 (6 L/min, the top of the printed scale) .. 435 (its
+   resting stop), and the blob around it is about 20 rows. Anything outside is
+   by construction not the ball, and letting it compete for the peak is how the
+   engine lost a whole afternoon twice: from 2026-08-16 13:09 and 2026-08-17
+   12:51 UTC low sun put a bright edge just below the old YTOP=60, and the
+   clipped tail of it beat the real ball. 40 of 164 uploaded frames were
+   refused with "two equally strong candidates" while the ball sat in plain
+   sight, correctly found, at the right y.
+
+   Measured over the 25 labelled frames and those 164 uploads:
+     YTOP 100..125 and YBOT 445..460 all give the same result — every frame
+       read, worst ambiguity 4.1x against a gate of 3.0. A plateau, not a
+       knife edge, unlike BASE_TILT.
+     Outside it the failure is immediate and one-sided: YBOT 470 loses 8
+       frames to the mirror-image artefact at the bottom, YTOP 90 loses 3,
+       YTOP 130 starts clipping the 6 L/min frame (worst error 0.078 -> 0.090).
+   The values below sit mid-plateau, ~19 rows clear of the ball at either
+   extreme and ~15 rows clear of the artefacts. Both sweep readings at the
+   extremes (6 L at y=139, min at y=435) are unchanged to the last decimal.
+
+   YTOP must stay below Y_MAX_STATE (132) or the "Max" state becomes
+   unreachable, and YBOT above Y_CAL_MAX+12 (439) or "Under 0,3" does. */
+const YTOP=120, YBOT=455;
 const RY1=100, RY2=460;    // row band whose column profile gives the sideways shift
 /* The tube leans about 1.2 degrees anticlockwise in the upright picture, so
    every band follows it. Mind the sign: analysis runs on a MIRRORED canvas

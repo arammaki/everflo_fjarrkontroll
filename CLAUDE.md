@@ -264,6 +264,35 @@ the sweep labels the whole physical range, min (y=434, reads 0.25) up to
 6 L/min (y=139), so nothing the knob can reach is extrapolated any more.
 y>439 (Y_CAL_MAX+12) -> "Under 0.3".
 
+**The peak search window is the ball's physical range, not the picture's.**
+`YTOP=120, YBOT=455` (reference rows; dy is already removed when the difference
+profile is built, so the window does not move with the camera). The ball cannot
+leave y 139 (6 L/min) .. 435 (its resting stop) and its blob is about 20 rows
+wide, so everything outside is by construction not the ball. Letting it compete
+cost two whole afternoons: from 2026-08-16 13:09 and 2026-08-17 12:51 UTC low
+sun put a bright edge just under the old `YTOP=60`, and its clipped tail beat
+the real ball. 40 of 164 uploaded frames were refused as "two equally strong
+candidates" while the ball sat in plain sight, correctly found, at the right y.
+The mirror image of that is the chrome nut below the tube (y 465-495), whose
+specular highlight is blown out in the reference and dull in flat light — it was
+`min`'s nearest rival in the sweep all along (ambiguity 17.2x -> 36.6x once
+excluded). Measured: YTOP 100..125 and YBOT 445..460 are one flat plateau, all
+164 uploads read, worst ambiguity 4.1x. Outside it the failure is immediate —
+YBOT 470 loses 8 frames, YTOP 90 loses 3, YTOP 130 clips the 6 L/min frame.
+YTOP must stay under Y_MAX_STATE (132) and YBOT over Y_CAL_MAX+12 (439) or
+those two states become unreachable.
+
+**Registration is where this will break next.** Once the window stopped
+manufacturing false ambiguity, `reg` became the tightest gate: 0.783 on the
+worst afternoon frame against a 0.75 threshold. All ten frames at the bottom of
+that list are glare frames, and on ten of them the tilt search sits pinned at
+the -3 degree edge of its range — it is absorbing a lighting gradient, not
+measuring a camera tip. The readings there are still right (1.91-1.96 where the
+same knob position reads 1.965), so nothing is broken; but a brighter afternoon
+takes `reg` under the gate and the frames go back to being refused, this time
+for a different reason. Widening `TILTS` is NOT the obvious fix — see the
+warning above about what a wider tilt search buys. Re-measure before touching.
+
 **`BASE_TILT` is negative, and the sign is the whole trap.** The tube leans
 about 1.2 degrees anticlockwise in the upright picture, but analysis runs on
 a MIRRORED canvas — the control panel applies `scale(-1,1)` before handing
@@ -337,9 +366,30 @@ sweep: mean 0.031 L/min, worst 0.078, 24 read, 0 rejected. The first sweep
 now fails three frames against it, which is correct — it is a different
 camera pose.
 
-That the sips decoder lands on the labels is also mild evidence that the
-engine tolerates a non-browser JPEG decoder — relevant if the reading is
-ever computed server-side, but not proof the decoders agree everywhere.
+The sips decoder and the browser's now have a much stronger result behind
+them than "lands on the labels": run over the same 124 uploaded frames the
+admin page had already analysed in Chrome, the offline harness reproduced
+every reading to 0.000 L/min with no state disagreement. So an engine change
+can be scored offline against real traffic and the answer is what the phone
+will show. That is not proof the decoders agree on every possible JPEG, but
+it does mean a server-side reading is a decoding question already answered
+for this camera.
+
+**The uploaded frames are a second, unlabelled test set — and the device
+labels them for free.** Between two `press` rows the knob has not moved, so
+every frame in that span shows the same flow (the user's observation,
+2026-08-17). That gives three checks no sweep can give: a rejected frame
+whose neighbours in the same span DID read has a known truth; every accepted
+frame in a span must agree with the others; and a span where the value jumps
+without a press means someone turned the knob by hand. All three were used to
+choose YTOP/YBOT. Tolerance is about 0.05 L/min, not zero — the ball floats
+and genuinely bobs that much (seen as 4.95 / 5.00 / 4.97 in one still span).
+
+Beware the third check when using the second: id 218 (2026-08-16 13:09 UTC)
+looks like a confidently wrong reading of 4.37 against a "truth" of 2.63 from
+its span, and is nothing of the sort — the ball really had moved to 4.3 and
+the picture shows it. An anchor from a span is a hypothesis. Look at the
+frame before believing it over the engine.
 
 The labelled images themselves are not in the repo (they are the user's);
 the Playwright suite that does leave-one-out lives outside it too.
