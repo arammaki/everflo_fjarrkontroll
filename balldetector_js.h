@@ -320,7 +320,21 @@ function judge(r){
   if(r.y < Y_MAX_STATE)
     return {ok:true, maxState:true, title:null, label:"Max",
             reason:"Bollen står vid eller ovanför det övre tjocka strecket — flödet är över skalans sista siffra."};
-  if(r.y > Y_CAL_MAX+12)
+  /* Test what the label claims. This was a threshold on y (Y_CAL_MAX+12 = 439)
+     until 2026-08-17, and the bottom of the tube is exactly where the ball
+     rests when the machine is off — so the only hard boundary in judge() sat
+     on top of the device's most common state. Two frames of a switched-off
+     concentrator, taken 15 minutes apart and identical to the eye, came out at
+     y 439.0598 and 438.9691: one said "Under 0,3", the other printed 0.16.
+     Nine hundredths of a pixel, which is noise, not movement.
+     Worse, 0.16 should never have been printed at all — it is past Y_CAL_MAX,
+     so it is extrapolated, and it means the same thing as the label it was
+     alternating with.
+     On flow the boundary lands at y=430.5, some 8.5 px from where the ball
+     actually rests (seen at 435 and 439), which is a margin rather than a
+     coin toss. The labelled 0.3 frame reads 0.355 and still prints a number,
+     so the sweep keeps checking it numerically. */
+  if(r.flow < 0.3)
     return {ok:true, bottomState:true, title:null, label:"Under 0,3",
             reason:"Bollen ligger vid eller nära botten — flödet är under 0,3 L/min eller avstängt."};
   if(r.y < Y_CAL_MIN-2 || r.y > Y_CAL_MAX+2)

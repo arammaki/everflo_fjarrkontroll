@@ -57,7 +57,7 @@
   #define OTA_PASSWORD ""         // empty = OTA disabled, and it stays disabled
 #endif                            // rather than open. See otaInit().
 
-#define FW_VERSION "1.9.4"
+#define FW_VERSION "1.9.5"
 
 /* ---------------- MOTOR ---------------- */
 #define USE_TMC_UART 0            // 1 = current control + true freewheel over UART
