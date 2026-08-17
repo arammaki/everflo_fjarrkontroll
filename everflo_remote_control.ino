@@ -57,7 +57,7 @@
   #define OTA_PASSWORD ""         // empty = OTA disabled, and it stays disabled
 #endif                            // rather than open. See otaInit().
 
-#define FW_VERSION "1.9.6"
+#define FW_VERSION "1.9.7"
 
 /* ---------------- MOTOR ---------------- */
 #define USE_TMC_UART 0            // 1 = current control + true freewheel over UART
@@ -690,7 +690,15 @@ bool uploadFrame(const char *reason) {
                "&steg=" + stepDegrees +
                "&uptime=" + (millis() / 1000) +
                "&rssi=" + WiFi.RSSI() +
-               "&fw=" FW_VERSION;
+               "&fw=" FW_VERSION
+               // The engine this firmware serves at /motor.js, by content hash
+               // (generated into balldetector_js.h). fw alone cannot answer
+               // "what did it read at the time": an engine is baked into a
+               // firmware build but the two version numbers are unrelated, so
+               // the admin page had to leave that column empty and say so.
+               // With this it can attribute a stored reading to the engine
+               // that was actually live when the frame was taken.
+               "&motor=" ENGINE_VERSION;
   // The turn that caused this frame, signed. Only meaningful for a press.
   if (strcmp(reason, "press") == 0) url += String("&tryck=") + lastPressDegrees;
 

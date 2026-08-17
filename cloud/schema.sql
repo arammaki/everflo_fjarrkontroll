@@ -26,7 +26,17 @@ CREATE TABLE IF NOT EXISTS readings (
                                    -- unless reason='press'
   uptime_s     INTEGER,
   rssi         INTEGER,
-  fw           TEXT
+  fw           TEXT,
+
+  -- Content hash of the detection engine this firmware served at /motor.js,
+  -- reported by the device since v1.9.7. `fw` cannot stand in for it: an
+  -- engine is baked into a firmware build, but the two version numbers move
+  -- independently, so knowing the firmware never told us which engine was
+  -- live. With this, a row in `analyses` whose engine equals this one is
+  -- genuinely "what it read at the time" rather than "the first time someone
+  -- happened to click it". NULL for every frame uploaded before v1.9.7 —
+  -- and that must stay visible rather than be guessed at.
+  engine       TEXT
 );
 
 CREATE INDEX IF NOT EXISTS readings_received_at ON readings (received_at);
@@ -84,6 +94,9 @@ CREATE TABLE IF NOT EXISTS firmware (
 CREATE UNIQUE INDEX IF NOT EXISTS firmware_one_armed
   ON firmware ((1)) WHERE armed_at IS NOT NULL;
 
+-- Added 2026-08-17 for existing databases:
+--   ALTER TABLE readings ADD COLUMN engine TEXT;
+--
 -- Added 2026-08-16 for existing databases:
 --   ALTER TABLE readings ADD COLUMN press_degrees INTEGER;
 --   (the analyses table below is created by running this file again)

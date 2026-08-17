@@ -145,8 +145,8 @@ export default {
     await env.DB.prepare(
       `INSERT INTO readings
          (received_at, reason, image_key, flow, state,
-          position, step_degrees, press_degrees, uptime_s, rssi, fw)
-       VALUES (?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?)`
+          position, step_degrees, press_degrees, uptime_s, rssi, fw, engine)
+       VALUES (?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
       now.toISOString(),
       reason,
@@ -156,7 +156,13 @@ export default {
       intParam(url, 'tryck'),   // signed, only sent for a press
       intParam(url, 'uptime'),
       intParam(url, 'rssi'),
-      (url.searchParams.get('fw') || '').slice(0, 32) || null
+      (url.searchParams.get('fw') || '').slice(0, 32) || null,
+      // Content hash of the engine the device was serving. Validated to the
+      // shape build_webui.mjs produces rather than stored as sent: it is
+      // joined against analyses.engine, and a junk value there would quietly
+      // match nothing forever instead of failing loudly.
+      /^[0-9a-f]{1,16}$/.test(url.searchParams.get('motor') || '')
+        ? url.searchParams.get('motor') : null
     ).run();
 
     /* An update that has landed is no longer pending. Disarming on the
