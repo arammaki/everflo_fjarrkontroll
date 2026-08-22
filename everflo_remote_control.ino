@@ -68,7 +68,7 @@
    1.10.0 a step up from 1.9.7 rather than a step back. Nothing sorts them
    anyway: the firmware, the Worker and publish_firmware.mjs all compare for
    equality only. */
-#define FW_VERSION "1.10.0"
+#define FW_VERSION "1.10.1"
 
 /* ---------------- MOTOR ---------------- */
 #define USE_TMC_UART 0            // 1 = current control + true freewheel over UART
@@ -134,8 +134,11 @@
    idle plus a bright flash per frame was the obvious design and is the wrong
    one: the control panel polls /bild once a second, so it would strobe over
    the meter someone is trying to read, and every analysed frame has to be lit
-   identically anyway. 60% of full, neutral white. */
-#define LED_LEVEL       153       // 0.6 * 255
+   identically anyway. Neutral white, so R=G=B and the colour order cannot
+   show. 50 was picked on the rig on 2026-08-22, replacing a first guess of
+   153; whatever number ends up here is the light the calibration sweep must
+   be taken under, because the sweep is what binds the two together. */
+#define LED_LEVEL       50        // ~20% of full
 
 /* 1 = simply lit, boot to power-off. This is the default, and the reason is
    the detector rather than convenience.

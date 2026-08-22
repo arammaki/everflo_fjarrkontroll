@@ -83,7 +83,8 @@ bound to. Set `LED_ALWAYS_ON 0` if it turns out too bright for a kitchen at
 night — the conditional path (lit 3 s after a capture, 60 s after a UI
 heartbeat, `LED_SETTLE_MS` before a cold capture) is compiled in and tested.
 
-- **One brightness, `LED_LEVEL 153`** (60%, neutral white). A dim idle plus a
+- **One brightness, `LED_LEVEL 50`** (~20%, neutral white; 153 was the first
+  guess, 50 was chosen on the rig 2026-08-22). A dim idle plus a
   bright flash per frame is the obvious design and the wrong one: the control
   panel polls `/bild` at 1 Hz, so it would strobe over the meter, and every
   analysed frame has to be lit identically anyway.
