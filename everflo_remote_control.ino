@@ -68,7 +68,7 @@
    1.10.0 a step up from 1.9.7 rather than a step back. Nothing sorts them
    anyway: the firmware, the Worker and publish_firmware.mjs all compare for
    equality only. */
-#define FW_VERSION "1.10.5"
+#define FW_VERSION "1.10.6"
 
 /* ---------------- MOTOR ---------------- */
 #define USE_TMC_UART 0            // 1 = current control + true freewheel over UART
@@ -584,10 +584,12 @@ static const char PAGE[] = R"HTML(
     wrapper shrink-wraps a 225x640 canvas — on a phone that is about 146 px
     across, which would break the one warning on this page that has to be read
     at a glance into eight characters a line. The canvas is centred and the
-    spare width stays black, which is what the wrapper already is. */
+    spare width takes the PAGE's background, not black — the picture then sits
+    on the page rather than in a letterbox. Keep this colour and body's the
+    same; they are two literals that have to agree, and nothing enforces it. */
  #camwrap{width:auto;min-width:min(320px,92vw);max-width:100%;overflow:hidden;
           border-radius:12px;justify-content:center;
-          background:#000;position:relative;display:flex}
+          background:#f4f4f2;position:relative;display:flex}
  #cv{height:52vh;width:auto;max-width:100%;display:block}
  #camwrap.stale #cv{opacity:.3}
  #stale{display:none;position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);
