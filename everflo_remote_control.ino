@@ -68,7 +68,7 @@
    1.10.0 a step up from 1.9.7 rather than a step back. Nothing sorts them
    anyway: the firmware, the Worker and publish_firmware.mjs all compare for
    equality only. */
-#define FW_VERSION "1.10.4"
+#define FW_VERSION "1.10.5"
 
 /* ---------------- MOTOR ---------------- */
 #define USE_TMC_UART 0            // 1 = current control + true freewheel over UART
@@ -579,7 +579,14 @@ static const char PAGE[] = R"HTML(
     narrow tube, and the crop below makes it taller and narrower still. Left
     to width:100% the element would be stretched to the wrapper and then
     letterboxed back down by object-fit, wasting most of the screen on black. */
- #camwrap{width:auto;max-width:100%;overflow:hidden;border-radius:12px;
+ /* min-width is for the stale banner, not the picture. #stale is absolutely
+    positioned left:0/right:0 INSIDE this wrapper, and after the crop the
+    wrapper shrink-wraps a 225x640 canvas — on a phone that is about 146 px
+    across, which would break the one warning on this page that has to be read
+    at a glance into eight characters a line. The canvas is centred and the
+    spare width stays black, which is what the wrapper already is. */
+ #camwrap{width:auto;min-width:min(320px,92vw);max-width:100%;overflow:hidden;
+          border-radius:12px;justify-content:center;
           background:#000;position:relative;display:flex}
  #cv{height:52vh;width:auto;max-width:100%;display:block}
  #camwrap.stale #cv{opacity:.3}
