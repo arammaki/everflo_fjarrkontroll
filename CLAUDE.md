@@ -65,7 +65,9 @@ position 8 = the potentiometer/gold-hole end:
 
 ### The meter light (v1.10.0)
 One WS2812D-F5 pixel on **D3**, aimed at the flow meter. VCC→XIAO 5V,
-GND→GND, Din→D3, ~22 mA at the level used. That 5V pin is USB VBUS and 22 mA
+GND→GND, Din→D3, ~22 mA at the level used. Dupont jumpers, like everything
+else in the rig — nothing here is soldered — and the pixel's three are taped
+down, so that end is the least likely in the build to work loose. That 5V pin is USB VBUS and 22 mA
 is not what iron rule 1 is about — that rule is the motor rail, which is amps
 and still comes from the MB102 alone.
 
