@@ -68,7 +68,7 @@
    1.10.0 a step up from 1.9.7 rather than a step back. Nothing sorts them
    anyway: the firmware, the Worker and publish_firmware.mjs all compare for
    equality only. */
-#define FW_VERSION "1.10.6"
+#define FW_VERSION "1.10.7"
 
 /* ---------------- MOTOR ---------------- */
 #define USE_TMC_UART 0            // 1 = current control + true freewheel over UART
@@ -1046,6 +1046,20 @@ void startWebServer() {
                                     // other end: alerts 20 min after silence.
 unsigned long lastPing = 0;
 
+/* Lets the sensor's exposure catch up with the light before a frame is kept.
+   Draining is what advances it: a buffer nobody empties holds whatever was
+   captured before. Used on the boot path, where the light has just been
+   switched on and the sensor has never seen the scene. */
+void cameraSettle(unsigned long ms) {
+  if (!cameraOK) return;
+  unsigned long t0 = millis();
+  while (millis() - t0 < ms) {
+    camera_fb_t *fb = esp_camera_fb_get();
+    if (fb) esp_camera_fb_return(fb);
+    delay(30);
+  }
+}
+
 bool cameraDelivers() {
   if (!cameraOK) return false;
   camera_fb_t *fb = esp_camera_fb_get();
@@ -1518,6 +1532,26 @@ void setup() {
   // after this only logs failures, but on a first boot at the installation
   // site /log is the only way to see that the cloud path actually works —
   // absence of errors is not the same as proof it went through.
+  /* Write the pixel again before the one frame that cannot be retaken.
+     ledInit() writes it once, near the top of setup(), and nothing writes it
+     again until loop() starts — which is AFTER this upload. If that first
+     write does not take, and it evidently does not, the lamp stays dark for
+     the whole of setup() and the boot frame is a photograph of an unlit room.
+
+     Measured 2026-08-22 over three boots: mean brightness 6.8, 8.3 and 8.6 in
+     the tube against 108 for every later frame. What settles it is the glare
+     the LED throws beside the tube — in a normal frame that band reads 175
+     against the tube's 108 and saturates at 255, and in these three it read
+     8.5 against 8.6 with a brightest pixel of 14. A ratio of 1.0 is not a
+     mis-set exposure, it is no light source in the picture.
+
+     ledDirty forces the write: ledApply() skips one when the state it wants
+     is the state it thinks it already has, which here is exactly the belief
+     that is wrong. Then settle, because the sensor has just been handed a lit
+     room it has never seen. */
+  ledDirty = true;
+  ledApply();
+  cameraSettle(5000);
   if (cameraDelivers()) {
     bool ping = pingHealth();           // boot ping shortens the outage gap
     bool up = uploadFrame("boot");      // and one frame of "this is how it looked"
