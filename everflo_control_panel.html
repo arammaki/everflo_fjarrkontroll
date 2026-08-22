@@ -602,13 +602,21 @@ async function lightCall(q){
       : 'AVVIKER från det inkompilerade ljuset ('+j.standard+', vitt). Kalibreringen '+
         'gäller inte i det här ljuset — starta om enheten när du testat klart.';
   }catch(e){
-    /* Deliberately does not claim to know which: an old firmware's 404 and a
-       PIN-protected 403 carry no CORS header, so cross-origin they reach us
-       as the same opaque failure as a dead wifi. Naming one cause would send
-       the operator after the wrong one. */
     el.className='hint warn';
-    el.textContent='Ingen kontakt med lampan – enheten svarade inte, '+
-                   'eller kör firmware före 1.10.0.';
+    /* A timeout is a different thing from no contact and needs saying so:
+       the request has usually reached the device, so the lamp may well have
+       changed while this line claims it did not — and with it the AVVIKER
+       warning that is the whole reason the panel nags. A big press blocks the
+       device's single web task for about two seconds, which is how you get
+       here. motor() draws the same distinction for the same reason.
+       The other branch deliberately does not claim to know which failure it
+       was: an old firmware's 404 and a PIN-protected 403 carry no CORS
+       header, so cross-origin they arrive as the same opaque error as a dead
+       wifi, and naming one would send the operator after the wrong one. */
+    el.textContent = e.name==='AbortError'
+      ? 'Enheten svarade inte i tid – osäkert om ändringen gick fram. Kontrollera lampan.'
+      : 'Ingen kontakt med lampan – enheten svarade inte, '+
+        'eller kör firmware före 1.10.0.';
   }finally{ clearTimeout(tm); }
 }
 function setLight(){
@@ -627,11 +635,26 @@ async function resetLight(){
   if(lightStandard===null) return;      // the line above now says why
   lightCall('?on=1&level='+lightStandard+'&rgb=ffffff');
 }
+/* Same in-progress line and same budget as lightCall. It had neither, which
+   left it with exactly the dead-button behaviour the rest of this section
+   was just fixed for — and here it matters more, because the lamp is the
+   only feedback the test has and it does not start for a second. */
 async function ledTest(){
   const el=document.getElementById('lightState');
   if(!host){ el.className='hint'; el.textContent='Ange adress och tryck Starta först.'; return; }
-  try{ await fetch('http://'+host+'/api/led-test'); }
-  catch(e){ el.className='hint warn'; el.textContent='Nådde inte enheten.'; }
+  el.className='hint'; el.textContent='Kontaktar enheten…';
+  const ac=new AbortController();
+  const tm=setTimeout(()=>ac.abort(), 4000);
+  try{
+    await fetch('http://'+host+'/api/led-test',{signal:ac.signal});
+    el.className='hint';
+    el.textContent='Färgtest igång: rött, grönt, blått, vitt – en sekund var.';
+  }catch(e){
+    el.className='hint warn';
+    el.textContent = e.name==='AbortError'
+      ? 'Enheten svarade inte i tid – osäkert om testet startade.'
+      : 'Nådde inte enheten.';
+  }finally{ clearTimeout(tm); }
 }
 /* No frame = no valid reading. The number must be cleared, otherwise a stale
    value stays on screen and looks current after the device drops off. */
