@@ -579,8 +579,16 @@ let lightStandard=null;   // learned from the device; never assumed
 async function lightCall(q){
   const el=document.getElementById('lightState');
   if(!host){ el.className='hint'; el.textContent='Ange adress och tryck Starta först.'; return; }
+  /* Say that the call is under way before making it. Without this a failed
+     call repaints the message that was already on screen — same red line,
+     same words — and the button is indistinguishable from a dead one. That
+     is precisely how "Återställ till standard" looked with no device on the
+     other end: it was working, it just had nothing new to say. */
+  el.className='hint'; el.textContent='Kontaktar enheten…';
+  const ac=new AbortController();
+  const tm=setTimeout(()=>ac.abort(), 4000);   // same budget as motor()
   try{
-    const j=await (await fetch('http://'+host+'/api/light'+q)).json();
+    const j=await (await fetch('http://'+host+'/api/light'+q, {signal:ac.signal})).json();
     lightStandard=j.standard;
     document.getElementById('lOn').checked=j.on;
     document.getElementById('lLevel').value=j.level;
@@ -601,7 +609,7 @@ async function lightCall(q){
     el.className='hint warn';
     el.textContent='Ingen kontakt med lampan – enheten svarade inte, '+
                    'eller kör firmware före 1.10.0.';
-  }
+  }finally{ clearTimeout(tm); }
 }
 function setLight(){
   lightCall('?on='+(document.getElementById('lOn').checked?1:0)+
@@ -613,8 +621,10 @@ function setLight(){
    that is not the standard — and the only sign would be the warning line
    below it going red. */
 async function resetLight(){
+  // The compiled default has to come from the device; guessing it would make
+  // a button labelled "reset to standard" set something that is not it.
   if(lightStandard===null) await lightCall('');
-  if(lightStandard===null) return;      // still no contact; the line says so
+  if(lightStandard===null) return;      // the line above now says why
   lightCall('?on=1&level='+lightStandard+'&rgb=ffffff');
 }
 async function ledTest(){
