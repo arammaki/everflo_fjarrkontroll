@@ -554,15 +554,16 @@ function start(){
   timer=setInterval(fetchFrame, 1000);
   fetchFrame();
   if(pulseTimer) clearInterval(pulseTimer);
-  pulseTimer=setInterval(pulse, 20000);
+  pulseTimer=setInterval(pulse, 5000);
   pulse();
   lightCall('');            // plain GET: reads the light without changing it
 }
 /* Keeps the lamp over the flow meter lit while this page is being watched.
    The 1 Hz /bild poll would very nearly do it on its own, but its window on
    the device is 3 s and a failed request blinks the light off — which lands
-   right on the meter you are reading. Firmware v1.10.0 and later; older
-   devices 404 and the catch swallows it. */
+   right on the meter you are reading. Every 5 s, because the device's pulse
+   window is 15 s and a window shorter than two beats is a lamp that flickers.
+   Firmware v1.10.0 and later; older devices 404 and the catch swallows it. */
 function pulse(){
   if(!host || document.visibilityState!=='visible') return;
   fetch('http://'+host+'/api/ui-pulse').catch(()=>{});

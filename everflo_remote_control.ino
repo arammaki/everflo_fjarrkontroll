@@ -68,7 +68,7 @@
    1.10.0 a step up from 1.9.7 rather than a step back. Nothing sorts them
    anyway: the firmware, the Worker and publish_firmware.mjs all compare for
    equality only. */
-#define FW_VERSION "1.10.2"
+#define FW_VERSION "1.10.3"
 
 /* ---------------- MOTOR ---------------- */
 #define USE_TMC_UART 0            // 1 = current control + true freewheel over UART
@@ -155,14 +155,58 @@
    ways on top of an ambient that already varies. Constant means one lighting,
    which is the only thing the calibration can be bound to.
 
-   0 = lit only while the picture is in use (LED_AFTER_* below). Flip it if
-   the pixel turns out too bright for a kitchen at night; nothing else has to
-   change, and /api/ui-pulse keeps working either way. */
+   0 = lit only while the picture is in use (LED_AFTER_* below). That path is
+   compiled, reviewed and ready; it is not the default yet, deliberately.
+
+   Two reasons it stays at 1 for now. Power is not one of them: at level 50
+   the pixel draws about 8 mA against the 100-200 mA the board already pulls,
+   off the 5V pin, which is USB VBUS straight through and never touches the
+   XIAO's own regulators.
+
+   The first is sequencing. The calibration is swept with the light constantly
+   on and the exposure long since settled — the control panel polls /bild once
+   a second throughout a sweep, so it cannot be swept any other way. Changing
+   the light mode in the same breath as the calibration would leave any
+   trouble the next day belonging to either of them.
+
+   The second is what conditional actually costs: the 15-minute cloud upload
+   fires with nobody watching, so it is a COLD capture every time, and those
+   are the frames that become the permanent record. If LED_SETTLE_MS is not
+   long enough the contrast gate refuses them and the archive goes patchy in
+   exactly the place it is the only witness. That is measurable — flip this to
+   0, let it run a night, and score the uploads — but measure it on its own,
+   after a calibration that is already known to work. */
 #define LED_ALWAYS_ON   1
 
-#define LED_AFTER_FRAME_MS  3000UL   // LED_ALWAYS_ON 0: lit this long after
-#define LED_AFTER_PULSE_MS 60000UL   // a capture, and after a UI heartbeat
-#define LED_SETTLE_MS        200     // exposure settling before a cold capture
+/* The pulse window MUST exceed the heartbeat interval, or the lamp blinks out
+   between two beats while someone is standing there reading it. Both pages
+   beat every 5 s, so 15 s survives two lost beats and still goes dark 10-15 s
+   after the last page closes. Raise one of these and you must raise the
+   other. The frame window is what actually holds it on while a page is being
+   watched — /bild arrives four times a second — so the pulse only becomes
+   load-bearing during a network hiccup, which is the whole reason it exists. */
+#define LED_AFTER_FRAME_MS  3000UL   // lit this long after a capture
+#define LED_AFTER_PULSE_MS 15000UL   // ... and this long after a UI heartbeat
+/* Two settle times, because the two cold callers cost completely different
+   things. 200 ms — five frames — is not enough for auto-exposure coming back
+   from a dark room, but the fix is not one longer number.
+
+   /bild has somebody waiting, and the delay runs on the port-80 task, which
+   is the one task ALL handlers share: a second of it stalls the +/- buttons
+   too, exactly when she has just opened the page. It also does not need long,
+   because the next frame is 250 ms behind and an underexposed one is refused
+   by the contrast gate rather than believed.
+
+   The upload has nobody waiting, gets one shot, and becomes the permanent
+   record. It already blocks loop() for seconds inside the TLS POST, so a
+   second and a half more is free, and it is the only place where getting the
+   exposure wrong costs something that cannot be retaken.
+
+   Both are considered guesses, not measurements. Check them against real
+   uploads with tools/score_uploads.mjs once the unit has run a night on
+   LED_ALWAYS_ON 0. */
+#define LED_SETTLE_MS        300     // /bild: someone is waiting, and so is the motor
+#define LED_SETTLE_UPLOAD_MS 1500    // the archive frame: nobody waiting, no retake
 /* A WS2812 latches what it was last sent and there is no way to read it back,
    so a frame corrupted on the wire — this pixel lives a few centimetres from
    a stepper being switched — would stay wrong until someone rebooted the
@@ -449,8 +493,9 @@ void ledApply() {
    the next frame 250 ms later is right anyway.
 
    Nothing here fires while LED_ALWAYS_ON is 1: the light went on at boot and
-   the elapsed time has been hours. */
-void ledForCapture() {
+   the elapsed time has been hours. `settle` is the caller's own budget — see
+   LED_SETTLE_MS and LED_SETTLE_UPLOAD_MS. */
+void ledForCapture(unsigned long settle) {
   lastCaptureAt = millis();
   ledApply();
   if (ledMutex) xSemaphoreTake(ledMutex, portMAX_DELAY);
@@ -458,7 +503,7 @@ void ledForCapture() {
   unsigned long on = millis() - ledLitAt;
   if (ledMutex) xSemaphoreGive(ledMutex);
   // Dark on purpose (/api/light?on=0) means there is nothing to settle for.
-  if (lit && on < LED_SETTLE_MS) delay(LED_SETTLE_MS - on);
+  if (lit && on < settle) delay(settle - on);
 }
 
 /* Red, green, blue, white — one second each, to check the wiring and the
@@ -653,7 +698,7 @@ nextFrame();
 // steadily. /bild alone would blink it off during a network hiccup, and it
 // stops within a minute of the page being closed or the phone locked.
 function pulse(){ if(document.visibilityState==='visible') fetch('/api/ui-pulse').catch(()=>{}); }
-pulse(); setInterval(pulse,20000);
+pulse(); setInterval(pulse,5000);
 document.addEventListener('visibilitychange',pulse);
 const allButtons=()=>document.querySelectorAll('.buttons button');
 async function press(op,deg){
@@ -896,8 +941,8 @@ esp_err_t h_log(httpd_req_t *req) {
   return httpd_resp_send(req, s.c_str(), s.length());
 }
 esp_err_t h_snapshot(httpd_req_t *req) {
-  ledForCapture();          // the image content and format are untouched;
-                            // only the light it is taken in changes
+  ledForCapture(LED_SETTLE_MS);   // the image content and format are untouched;
+                                  // only the light it is taken in changes
   camera_fb_t *fb = esp_camera_fb_get();
   if (!fb) return httpd_resp_send_500(req);
   httpd_resp_set_type(req, "image/jpeg");
@@ -1064,10 +1109,9 @@ bool uploadFrame(const char *reason) {
      the only record, because nobody is watching when it is taken.
 
      A no-op while LED_ALWAYS_ON is 1. With it at 0 this is the one caller
-     that has no page behind it, so it is also the one that pays the settling
-     time — 200 ms, nothing next to the TLS POST below, which already blocks
-     for seconds on the same task. */
-  ledForCapture();
+     with no page behind it, which is why it gets the long settle: nothing is
+     waiting on it, and it is the one frame that cannot be retaken. */
+  ledForCapture(LED_SETTLE_UPLOAD_MS);
   camera_fb_t *fb = esp_camera_fb_get();
   if (!fb) return false;
 
