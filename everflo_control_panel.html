@@ -30,10 +30,17 @@
  .steps input{text-align:center;font-size:1rem;min-width:0;width:100%}
  .mplus{background:#1c8a4c} .mminus{background:#4a6fa5}
  .mplus,.mminus{font-size:1.6rem;letter-spacing:.06em}
- #bands{width:100%;max-width:480px;font-size:.9rem}
- #bands summary{cursor:pointer;color:#4a6fa5;padding:6px 0}
- #bands label{display:flex;align-items:center;gap:6px;font-size:.85rem;color:#555}
+ #bands,#light{width:100%;max-width:480px;font-size:.9rem}
+ #bands summary,#light summary{cursor:pointer;color:#4a6fa5;padding:6px 0}
+ #bands label,#light label{display:flex;align-items:center;gap:6px;font-size:.85rem;color:#555}
  #bands label input{width:100%;min-width:0;text-align:center}
+ /* The slider gets a row of its own rather than a third of one: this page is
+    opened on a phone, where three controls abreast leaves it a thumb wide. */
+ #light label input[type=range]{width:100%;min-width:0}
+ #light label input[type=checkbox]{flex:0 0 auto;padding:0}
+ #light label input[type=color]{flex:0 0 auto;padding:0;width:46px;height:32px}
+ #lVal{font-family:monospace;color:#333;min-width:2.2em;text-align:right}
+ #lightState.warn{color:#a33;font-weight:600}
 </style></head><body>
 <h1>Bolldetektor (körs i telefonen)</h1>
 <div class="row">
@@ -83,6 +90,29 @@
            inputmode="decimal"> graders avvikelse</label>
   </div>
   <p class="hint" id="bandhint" style="text-align:left"></p>
+</details>
+
+<details id="light">
+  <summary>Belysning</summary>
+  <p class="hint" style="text-align:left">Lampan som lyser på mätaren. Skruva medan
+  du tittar på entydighet och kontrast ovanför — det är så nivån väljs, inte på
+  känsla. Ändringarna ligger <b>bara i minnet</b>: enheten går tillbaka till det
+  inkompilerade ljuset vid varje omstart. Säg vilket värde som blev bäst så bakas
+  det in i firmware.</p>
+  <div class="row">
+    <label><input id="lOn" type="checkbox" checked onchange="setLight()"> Tänd</label>
+    <label>Färg <input id="lRgb" type="color" value="#ffffff" onchange="setLight()"></label>
+  </div>
+  <div class="row">
+    <label>Styrka <input id="lLevel" type="range" min="0" max="255" value="153"
+           oninput="document.getElementById('lVal').textContent=this.value"
+           onchange="setLight()"> <span id="lVal">153</span></label>
+  </div>
+  <div class="row">
+    <button class="secondary" onclick="resetLight()">Återställ till standard</button>
+    <button class="secondary" onclick="ledTest()">Färgtest</button>
+  </div>
+  <p class="hint" id="lightState" style="text-align:left"></p>
 </details>
 
 <div class="row">
@@ -451,7 +481,7 @@ function judge(r){
 
 /* ---------- shell: polling, display, motor, log (from bolldetektor_3) ---------- */
 const cv=document.getElementById('cv'), ctx=cv.getContext('2d',{willReadFrequently:true});
-let host='', lastFlow=null, timer=null, lastCleanFrame=null, fetchingSince=0;
+let host='', lastFlow=null, timer=null, lastCleanFrame=null, fetchingSince=0, pulseTimer=null;
 try{
   document.getElementById('log').value = localStorage.getItem('ev_logg')||'';
   const h=localStorage.getItem('ev_host'); if(h) document.getElementById('host').value=h;
@@ -491,6 +521,75 @@ function start(){
   fetchingSince=0;
   timer=setInterval(fetchFrame, 1000);
   fetchFrame();
+  if(pulseTimer) clearInterval(pulseTimer);
+  pulseTimer=setInterval(pulse, 20000);
+  pulse();
+  lightCall('');            // plain GET: reads the light without changing it
+}
+/* Keeps the lamp over the flow meter lit while this page is being watched.
+   The 1 Hz /bild poll would very nearly do it on its own, but its window on
+   the device is 3 s and a failed request blinks the light off — which lands
+   right on the meter you are reading. Firmware v1.10.0 and later; older
+   devices 404 and the catch swallows it. */
+function pulse(){
+  if(!host || document.visibilityState!=='visible') return;
+  fetch('http://'+host+'/api/ui-pulse').catch(()=>{});
+}
+document.addEventListener('visibilitychange', pulse);
+
+/* ---------- the meter light ----------
+   Everything here is RAM-only on the device and reverts on a restart, which
+   is why the panel can offer a free slider at all: the calibration is bound
+   to one lighting, so the danger is not the experiment, it is forgetting to
+   end it. Hence the loud state line below whenever the values differ from
+   what the firmware was compiled with. */
+let lightStandard=null;   // learned from the device; never assumed
+async function lightCall(q){
+  const el=document.getElementById('lightState');
+  if(!host){ el.className='hint'; el.textContent='Ange adress och tryck Starta först.'; return; }
+  try{
+    const j=await (await fetch('http://'+host+'/api/light'+q)).json();
+    lightStandard=j.standard;
+    document.getElementById('lOn').checked=j.on;
+    document.getElementById('lLevel').value=j.level;
+    document.getElementById('lVal').textContent=j.level;
+    document.getElementById('lRgb').value='#'+j.rgb;
+    const standard = j.on && j.level===j.standard && j.rgb==='ffffff';
+    el.className = standard ? 'hint' : 'hint warn';
+    el.textContent = standard
+      ? 'Ljuset står på det inkompilerade värdet ('+j.standard+', vitt)'+
+        (j.always?', konstant tänt.':', tänt bara när bilden används.')
+      : 'AVVIKER från det inkompilerade ljuset ('+j.standard+', vitt). Kalibreringen '+
+        'gäller inte i det här ljuset — starta om enheten när du testat klart.';
+  }catch(e){
+    /* Deliberately does not claim to know which: an old firmware's 404 and a
+       PIN-protected 403 carry no CORS header, so cross-origin they reach us
+       as the same opaque failure as a dead wifi. Naming one cause would send
+       the operator after the wrong one. */
+    el.className='hint warn';
+    el.textContent='Ingen kontakt med lampan – enheten svarade inte, '+
+                   'eller kör firmware före 1.10.0.';
+  }
+}
+function setLight(){
+  lightCall('?on='+(document.getElementById('lOn').checked?1:0)+
+            '&level='+document.getElementById('lLevel').value+
+            '&rgb='+document.getElementById('lRgb').value.replace('#',''));
+}
+/* Reads the compiled default off the device first if it has not been seen.
+   Guessing it would make a button labelled "reset to standard" set something
+   that is not the standard — and the only sign would be the warning line
+   below it going red. */
+async function resetLight(){
+  if(lightStandard===null) await lightCall('');
+  if(lightStandard===null) return;      // still no contact; the line says so
+  lightCall('?on=1&level='+lightStandard+'&rgb=ffffff');
+}
+async function ledTest(){
+  const el=document.getElementById('lightState');
+  if(!host){ el.className='hint'; el.textContent='Ange adress och tryck Starta först.'; return; }
+  try{ await fetch('http://'+host+'/api/led-test'); }
+  catch(e){ el.className='hint warn'; el.textContent='Nådde inte enheten.'; }
 }
 /* No frame = no valid reading. The number must be cleared, otherwise a stale
    value stays on screen and looks current after the device drops off. */

@@ -22,6 +22,7 @@ and verify.
 | Motor | NEMA 17 pancake (17HE08-1004S), 0.9°... driven 1/8 microstep? — see stepsPerPress() in code; default 39°/press, adjustable via /api/steg |
 | Motor PSU | MB102 breadboard supply, jumper 5V, barrel input **needs 7–12 V** (1117 regulators, ~1 V dropout) |
 | Cup | 3D-printed conical cup on the D-shaft (Ø5.18 bore / flat 4.71), M3 set screw against the flat |
+| Light | WS2812D-F5, **one** pixel, colour order **RGB** (not GRB). VCC→XIAO 5V, GND→GND, Din→D3. ~22 mA at the level used. Datasheet WS2812D-F5-1261: VIH 2.7 V, so 3.3 V data into a 5 V pixel is in spec |
 
 ### Wifi band (measured on site 2026-08-15)
 The ESP32-S3 is **2.4 GHz only**. Put the viewing phone on **5 GHz**: when
@@ -52,6 +53,7 @@ XIAO (USB-C up): left edge top-down D0–D6; right edge top-down 5V, GND, 3V3, D
 | D2 | EN (active LOW) | red row pos 8 |
 | 3V3 | VDD | black row pos 2 |
 | GND | GND | black row pos 1 or 7 |
+| D3 | WS2812 Din (the meter light) — see below | — |
 | GPIO21 | onboard LED, **active LOW** (heartbeat 1 s on / 4 s off) | — |
 
 TMC clone rows, position 1 = the "TMC2209 V2.0" text/big-capacitor end,
@@ -60,6 +62,87 @@ position 8 = the potentiometer/gold-hole end:
 - **Red row (logic) 1→8:** DIR, STEP, CLK, UART, UART, MS2, MS1, EN
 - Motor coils: black+blue = coil A → 1A/1B; green+red = coil B → 2A/2B.
 - VREF ≈ 0.6 V (pot center vs GND, measured with VM powered, motor unplugged).
+
+### The meter light (v1.10.0)
+One WS2812D-F5 pixel on **D3**, aimed at the flow meter. VCC→XIAO 5V,
+GND→GND, Din→D3, ~22 mA at the level used. That 5V pin is USB VBUS and 22 mA
+is not what iron rule 1 is about — that rule is the motor rail, which is amps
+and still comes from the MB102 alone.
+
+**It replaces the desk lamp.** The unit stands in the kitchen (that is the
+point of a remote control), and a small desk lamp has been burning on the
+meter around the clock so the night picture is readable. So constant light is
+already the accepted state of the room, and `LED_ALWAYS_ON 1` is the default
+for the detector's sake, not for convenience: in daylight the ambient
+dominates and the pixel is a small fixed addition, whereas a light that comes
+and goes would put every frame in one of two lightings on top of an ambient
+that already varies. One lighting is the only thing a calibration can be
+bound to. Set `LED_ALWAYS_ON 0` if it turns out too bright for a kitchen at
+night — the conditional path (lit 3 s after a capture, 60 s after a UI
+heartbeat, `LED_SETTLE_MS` before a cold capture) is compiled in and tested.
+
+- **One brightness, `LED_LEVEL 153`** (60%, neutral white). A dim idle plus a
+  bright flash per frame is the obvious design and the wrong one: the control
+  panel polls `/bild` at 1 Hz, so it would strobe over the meter, and every
+  analysed frame has to be lit identically anyway.
+- **Colour order is RGB, not GRB** for this part (`LED_ORDER`). It is only
+  observable through `/api/led-test` — the working light is white, where
+  R=G=B. If the test shows green where the code says red, switch
+  `LED_ORDER` to `LED_COLOR_ORDER_GRB`.
+- **No library.** The ESP32 core 3.x ships `rgbLedWriteOrdered()`, which is
+  the same RMT driver with the colour order as a parameter. Adafruit_NeoPixel
+  would add a dependency the IDE and every build host has to have installed,
+  for nothing. (`neopixelWrite()` also exists but is deprecated in core 3.3.11
+  and logs a warning per call.)
+- **The cloud upload is lit too**, not just `/bild`. `uploadFrame()` takes its
+  own frame from `loop()`, with nobody watching. Leaving it dark would mean
+  every periodic frame is captured in the wrong light and refused by the
+  contrast gate — the archive going dark exactly where it is the only record.
+- **The pixel is written from two FreeRTOS tasks** (the port-80 httpd task and
+  `loop()`), so every write holds `ledMutex` — including the compare in
+  `ledApply()`, which both tasks run. The pixel is also rewritten every
+  `LED_REFRESH_MS`: a WS2812 latches what it was last sent with no readback,
+  so a frame corrupted by the stepper switching a few centimetres away would
+  otherwise stay wrong until a reboot while the firmware believed the meter
+  was lit.
+- **The colour test advances on loop time, not on the clock.** `loop()` blocks
+  for seconds inside `uploadFrame()`'s TLS POST and up to a minute inside
+  `checkFirmware()`, so a step derived from `millis() - start` skips colours —
+  or finds the test already over on its first pass and logs "done" having
+  shown nothing. Tapping the button five seconds after a press, while the
+  press upload is going out, is the way to hit it. Running long is harmless;
+  a skipped green reads as "the batch is GRB" and costs a reflash and a drive.
+- **`LED_ALWAYS_ON 0` does not light the port-81 stream.** `h_stream` captures
+  without stamping `lastCaptureAt`, so a direct viewer of `:81/stream` sees a
+  dark meter unless something else is lighting it. No shipped UI uses the
+  stream, so this is left alone rather than given the LED a third writing
+  task — but know it before debugging over that port with the flag flipped.
+- **`/api/led-test` does not block.** All port-80 handlers share one task, so
+  a four-second colour cycle inside the handler would freeze the +/− buttons
+  with it. It sets a flag, answers `{"ok":true}` at once, and `ledTestUpdate()`
+  in `loop()` runs the sequence.
+- Endpoints, all CORS: `GET /api/ui-pulse` → `{"ok":true}`, no PIN (passive,
+  and the cross-origin control panel cannot know a PIN — same reasoning as
+  `/api/status`); `GET /api/led-test` → `{"ok":true}`, PIN-checked;
+  `GET /api/light` → `{"on":,"level":,"rgb":,"standard":,"always":}`,
+  PIN-checked. Both UIs call `/api/ui-pulse` every 20 s while visible.
+- **`/api/light` is RAM only, same contract as `/api/steg`** — `?on=0|1`,
+  `?level=0..255`, `?rgb=RRGGBB`, and every restart puts `LED_LEVEL` and white
+  back. That revert is the whole safety model: a level is picked by watching
+  contrast and ambiguity move on the control panel, not by taste, so the
+  slider has to be free — but the calibration is bound to one lighting, so a
+  unit left in a half-finished experiment reads wrong. Here the way out is a
+  power blip rather than a trip. The panel says "AVVIKER från det
+  inkompilerade ljuset" in red whenever the values differ, and every change is
+  written to `/log`, because a non-default light is what explains a week of
+  odd readings. **What a session finds gets baked into `LED_LEVEL` and
+  reflashed** — it is not left living in RAM.
+
+**The light invalidates the calibration.** A new labelled sweep is required,
+and it must be taken in exactly the lighting the system will then run in — so
+if the desk lamp is going away, the sweep happens with the lamp off and the
+pixel on. Sweeping with both and running with one bakes in a lamp that is not
+there any more.
 
 ### Iron rules (never violate, never "optimize away")
 1. VM never from the XIAO. 2. Beep-test the EN wire (D2 ↔ red pos 8) after any
@@ -99,7 +182,8 @@ Single sketch `everflo_remote_control.ino`. Key pieces:
   authoritative next to the picture invites trusting it over the picture.
   The page therefore no longer polls `/api/status` at all.
 - **Web server port 80**: `/` (UI), `/api/plus`, `/api/minus`,
-  `/api/nollstall`, `/api/omstart`, `/api/status`, `/api/steg`, `/log`,
+  `/api/nollstall`, `/api/omstart`, `/api/status`, `/api/steg`,
+  `/api/ui-pulse`, `/api/led-test`, `/api/light`, `/log`,
   `/bild`. All JSON APIs and `/bild` send `Access-Control-Allow-Origin: *`
   (since v1.7.1) — the companion `everflo_control_panel.html` runs from a
   different origin and depends on it. See the Web UI section.
@@ -161,6 +245,17 @@ Single sketch `everflo_remote_control.ino`. Key pieces:
   bump after an engine change and a phone that cached the old engine keeps
   running it after a correct flash. That happened on 2026-08-16 — three
   recalibrations landed while the version stayed 1.8.9.
+- **Minor vs patch** (rule adopted 2026-08-22, because there had not been
+  one): **minor** when flashing is not the whole job — new hardware, a new
+  library, or a recalibration is required. **Patch** when flashing is all
+  there is to do. 1.7.0 and 1.8.0 fit it in hindsight (new API contract; the
+  page began computing a reading); 1.9.0 did not — it was a bug fix, and the
+  only thing pushing it over was habit, since 1.8.10 was available. These
+  fields are numbers, not digits, which is also what makes 1.10.0 a step up
+  from 1.9.7 rather than a step back. Nothing sorts them anyway: the
+  firmware, the Worker and `publish_firmware.mjs` all compare for equality
+  only — so the rule is for humans reading the log, and its only real duty is
+  to say "this one needs more than a flash".
 - One focused change per commit; commit message style for firmware changes:
   `v1.7.x: short description`. No wholesale refactors.
   **Commit messages are English** (since 2026-08-17; earlier history is
@@ -190,6 +285,11 @@ Post-flash checklist (serial 115200):
 `Connected! IP: ...` → `Stream server: port 81 OK` → `=== Ready ===`;
 LED heartbeat 1 s/4 s; page loads, footer shows the new version; `/bild`
 returns a JPEG; +/− move the motor and `Position:` logs tick.
+
+Since v1.10.0 also: `Light: WS2812 on D3, constant` in the boot log and the
+pixel actually lit, then `syrgas.local/api/led-test` from any browser — red,
+green, blue, white, one second each. **Green where the code says red means
+the batch is GRB**: switch `LED_ORDER` to `LED_COLOR_ORDER_GRB` and reflash.
 
 Claude Code can compile-check, but **every change must be flashed and
 verified by the user before it reaches the unit at my mother's** — it will
@@ -236,6 +336,14 @@ lossless and compensated by the UI rotation control instead — never
 change firmware camera settings (resolution, hmirror, vflip, format).
 The camera was moved and everything regenerated on 2026-08-16; the
 earlier sweep and its `0.1L` mislabel no longer apply.
+
+**A lighting change invalidates it too**, and v1.10.0 is one: the WS2812
+replaces the desk lamp that lit the meter (see "The meter light"). Until a
+fresh sweep is taken under the pixel, the reference is a picture of a room
+lit a different way, and the contrast and registration gates are what will
+notice. Take the sweep in exactly the lighting the unit will then run in —
+lamp off, pixel on — because a reference that averages both bakes in a lamp
+that is about to be removed.
 
 ### The engine has one source: `balldetector.js`
 Edit the detection engine **only** in `balldetector.js`, then run
@@ -403,6 +511,14 @@ frame before believing it over the engine.
 The labelled images themselves are not in the repo (they are the user's);
 the Playwright suite that does leave-one-out lives outside it too.
 
+### The control panel's light section (v1.10.0)
+`<details id="light">` on `everflo_control_panel.html` only — never on the
+device page. On/off, a 0-255 brightness slider and a colour swatch, all
+talking to `/api/light`, plus a "Färgtest" button for `/api/led-test`. It
+loads the current state on "Starta" with a plain GET, which changes nothing.
+Purpose: the light level for a detector is chosen by watching entydighet and
+kontrast respond, and those numbers are already on this page.
+
 ### Deployment safety
 The system will run live at a patient's home (not yet deployed).
 **Never automatic.** An update happens only because a human pushed one; the
@@ -534,5 +650,16 @@ deleted afterwards.
   2026-08-15: nothing is broken, it could not be tested before the visit,
   and a cache is a deliberately stale frame in a system whose whole point
   is that the image is current.
+- **Rename the Swedish URL paths to English** (`/bild`, `/api/nollstall`,
+  `/api/omstart`, `/api/steg`). Agreed 2026-08-22: they are wire format, none
+  of it is text the patient reads, and the language split says English there.
+  New paths are already being named in English (`/api/ui-pulse`,
+  `/api/led-test`). Its own commit, not folded into a feature, and the hazard
+  to design around is that **the control panel is deployed by copying a file
+  to a phone** — there is no guarantee the copy on her phone matches the repo,
+  so a rename can silently kill a panel that has been sitting there since
+  summer. Serve both names for a release, then drop the old ones once the
+  copies in the wild have been replaced. The NVS key `"lage"` and the
+  `localStorage` keys are NOT part of this: renaming those loses stored state.
 - `/api/glomwifi` (force portal without physical access)
 - ArduinoOTA and cloud-pull OTA both done (v1.9.2, v1.9.3) — see above

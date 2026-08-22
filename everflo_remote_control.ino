@@ -57,7 +57,18 @@
   #define OTA_PASSWORD ""         // empty = OTA disabled, and it stays disabled
 #endif                            // rather than open. See otaInit().
 
-#define FW_VERSION "1.9.7"
+/* Minor when flashing is not the whole job — new hardware, a new library, or
+   a recalibration is required. Patch when flashing is all there is to do.
+   1.10.0 is minor because a pixel has to be wired in and the calibration must
+   be swept again under the new light.
+
+   1.7.0 and 1.8.0 fit that rule; 1.9.0 did not — it was a bug fix, and the
+   only thing pushing it over was habit, because 1.8.10 was there for the
+   taking. These fields are numbers, not digits, which is also what makes
+   1.10.0 a step up from 1.9.7 rather than a step back. Nothing sorts them
+   anyway: the firmware, the Worker and publish_firmware.mjs all compare for
+   equality only. */
+#define FW_VERSION "1.10.0"
 
 /* ---------------- MOTOR ---------------- */
 #define USE_TMC_UART 0            // 1 = current control + true freewheel over UART
@@ -100,6 +111,62 @@
 #define PIN_EN   D2               // active LOW. HIGH = driver off = freewheel
 #define PIN_TMC_RX D7             // UART mode only
 #define PIN_TMC_TX D6
+
+/* ---------------- LIGHT (WS2812D-F5, one pixel) ---------------- */
+/* Lights the flow meter for the camera. Wiring: VCC -> XIAO 5V, GND -> GND,
+   Din -> D3. The 5V pin is USB VBUS and this draws ~22 mA at the level below,
+   so it does not touch iron rule 1 — that rule is about the motor rail, which
+   is amps and still comes from the MB102 alone.
+
+   Data is 3.3 V into a 5 V-powered pixel. The WS2812D-F5 datasheet
+   (WS2812D-F5-1261) puts VIH at 2.7 V so this is within spec, unlike the
+   plain WS2812B where VIH is 0.7*VDD = 3.5 V. If a future batch turns out
+   flaky, the fix is a diode in series with VCC (drops it to ~4.4 V and with
+   it the threshold), not raising the data line.
+
+   Colour order is RGB for this part, not the usual GRB. It only matters for
+   /api/led-test: the working light is neutral white, where R=G=B and the
+   order cannot be observed. If the test shows green where the code says red,
+   change LED_ORDER to LED_COLOR_ORDER_GRB and reflash. */
+#define PIN_LED_LIGHT   D3        // GPIO4
+#define LED_ORDER       LED_COLOR_ORDER_RGB
+/* One level, always the same, because the calibration is bound to it. A dim
+   idle plus a bright flash per frame was the obvious design and is the wrong
+   one: the control panel polls /bild once a second, so it would strobe over
+   the meter someone is trying to read, and every analysed frame has to be lit
+   identically anyway. 60% of full, neutral white. */
+#define LED_LEVEL       153       // 0.6 * 255
+
+/* 1 = simply lit, boot to power-off. This is the default, and the reason is
+   the detector rather than convenience.
+
+   The unit stands in the kitchen, not in her room — that is the whole point
+   of a remote control — and a small desk lamp has been burning on the meter
+   around the clock so the night picture is readable at all. So constant light
+   is already the accepted state of the room; the pixel replaces the lamp, it
+   does not add anything to it.
+
+   Switching it on and off would be actively worse than either. In daylight
+   the ambient dominates and the pixel is a small fixed addition; if it comes
+   and goes with whoever happens to be watching, every frame is lit one of two
+   ways on top of an ambient that already varies. Constant means one lighting,
+   which is the only thing the calibration can be bound to.
+
+   0 = lit only while the picture is in use (LED_AFTER_* below). Flip it if
+   the pixel turns out too bright for a kitchen at night; nothing else has to
+   change, and /api/ui-pulse keeps working either way. */
+#define LED_ALWAYS_ON   1
+
+#define LED_AFTER_FRAME_MS  3000UL   // LED_ALWAYS_ON 0: lit this long after
+#define LED_AFTER_PULSE_MS 60000UL   // a capture, and after a UI heartbeat
+#define LED_SETTLE_MS        200     // exposure settling before a cold capture
+/* A WS2812 latches what it was last sent and there is no way to read it back,
+   so a frame corrupted on the wire — this pixel lives a few centimetres from
+   a stepper being switched — would stay wrong until someone rebooted the
+   unit, while the firmware went on believing the meter was lit correctly.
+   Rewriting the same value every ten seconds costs 30 microseconds and turns
+   that from permanent into a ten-second blip. */
+#define LED_REFRESH_MS     10000UL
 
 #if USE_TMC_UART
   #include <TMCStepper.h>
@@ -270,6 +337,180 @@ bool cameraInit() {
 }
 
 /* ============================================================
+ *  LIGHT
+ *  One addressable pixel aimed at the flow meter, replacing the desk lamp
+ *  that has been standing in for it. Constant by default — see
+ *  LED_ALWAYS_ON above for why, and for the one brightness.
+ *
+ *  The machinery below is what LED_ALWAYS_ON 0 needs; with it at 1 the
+ *  windows never expire, ledApply() never sees a transition, and the
+ *  settle delay never fires.
+ * ============================================================ */
+SemaphoreHandle_t ledMutex = NULL;
+bool ledLit = false;                        // guarded by ledMutex: ledApply()
+                                            // runs on both tasks
+volatile unsigned long lastCaptureAt = 0;   // a frame was taken for someone
+volatile unsigned long lastUiPulseAt = 0;   // a page said it is being looked at
+volatile bool ledTestRunning = false;       // set by the handler, cleared in loop()
+int ledTestStep = -1;                       // loop() only — see ledTestUpdate()
+unsigned long ledTestStepAt = 0;            // loop() only: when this colour went up
+
+/* 0 means "never happened", which matters at boot: millis() starts near zero
+   and a plain age check would read as "just now" for the first few seconds.
+   Unsigned subtraction handles the 49-day rollover on its own. */
+static bool within(unsigned long stamp, unsigned long window) {
+  return stamp != 0 && millis() - stamp < window;
+}
+
+/* Runtime light settings, RAM only — exactly the contract /api/steg has, and
+   for the same reason. You cannot pick a light level for a detector by taste:
+   you set it and watch contrast and ambiguity move on the control panel. But
+   the unit must never be left standing in a half-finished experiment, so a
+   reboot, a power blip, an OTA or a wifi drop all put the compiled constants
+   back. What a session finds gets baked into LED_LEVEL and reflashed. */
+volatile bool     lightEnabled = true;      // /api/light?on=0 forces it dark
+volatile int      lightLevel   = LED_LEVEL;
+volatile uint8_t  lightR = 255, lightG = 255, lightB = 255;   // tint, scaled by level
+volatile bool     ledDirty = false;         // level/tint moved: rewrite even
+                                            // though the lit state did not change
+unsigned long ledLitAt  = 0;   // guarded by ledMutex: last dark -> lit transition
+unsigned long ledWroteAt = 0;  // guarded by ledMutex: last write of any kind
+
+/* Callers already holding ledMutex. The tint is what makes "off" and "a
+   colour" the same operation: level 0 writes black whatever the tint is. */
+static void ledSetLocked(bool lit) {
+  int l = lit ? lightLevel : 0;
+  rgbLedWriteOrdered(PIN_LED_LIGHT, LED_ORDER,
+                     (uint8_t)(lightR * l / 255),
+                     (uint8_t)(lightG * l / 255),
+                     (uint8_t)(lightB * l / 255));
+}
+
+/* The pixel is written from loop() AND from the web server's task, which are
+   different FreeRTOS tasks. A collision would at worst garble one pixel, but
+   this runs unattended for months and serialising it is three lines. */
+void ledWrite(uint8_t r, uint8_t g, uint8_t b) {
+  if (ledMutex) xSemaphoreTake(ledMutex, portMAX_DELAY);
+  rgbLedWriteOrdered(PIN_LED_LIGHT, LED_ORDER, r, g, b);
+  if (ledMutex) xSemaphoreGive(ledMutex);
+}
+void ledSet(bool lit) {
+  if (ledMutex) xSemaphoreTake(ledMutex, portMAX_DELAY);
+  ledSetLocked(lit);
+  if (ledMutex) xSemaphoreGive(ledMutex);
+}
+
+/* A plain `if` rather than `#if`: the compiler folds the constant either way,
+   but with #if the windows below become unreachable *text* and within() reads
+   as dead code the build then warns about. Both paths stay compiled here, so
+   flipping LED_ALWAYS_ON cannot uncover a branch that has quietly rotted. */
+bool ledShouldBeLit() {
+  if (!lightEnabled) return false;          // the runtime override wins
+  if (LED_ALWAYS_ON) return true;
+  return within(lastCaptureAt, LED_AFTER_FRAME_MS) ||
+         within(lastUiPulseAt, LED_AFTER_PULSE_MS);
+}
+
+/* Brings the pixel to the state the rules ask for.
+
+   The whole read-compare-write is inside the mutex because ledApply() runs on
+   both tasks: a capture handler calls it, and so does loop(). */
+void ledApply() {
+  if (ledTestRunning) return;               // the test owns the pixel
+  if (ledMutex) xSemaphoreTake(ledMutex, portMAX_DELAY);
+  bool want = ledShouldBeLit();
+  if (want != ledLit || ledDirty || millis() - ledWroteAt > LED_REFRESH_MS) {
+    if (want && !ledLit) ledLitAt = millis();
+    ledLit = want;
+    ledDirty = false;
+    ledWroteAt = millis();
+    ledSetLocked(want);
+  }
+  if (ledMutex) xSemaphoreGive(ledMutex);
+}
+
+/* Light the meter for a capture that is about to happen, and wait for the
+   exposure if the light has not been on long enough yet.
+
+   The wait is on how long the pixel has BEEN lit, not on whether this call
+   was the one that lit it. Both UIs open by sending /api/ui-pulse and then
+   asking for a frame, so in the ordinary cold start it is the pulse that
+   switches the light on and the frame arrives milliseconds later — and a
+   version that waited only when it did the switching itself would skip the
+   settle on exactly the capture the settle exists for.
+
+   200 ms is about five frames at VGA/20 MHz, which is what the sensor's
+   auto-exposure needs to come back from the dark. A frame taken too early is
+   underexposed, and an underexposed frame fails the engine's contrast gate
+   rather than producing a plausible wrong number — the safe direction, and
+   the next frame 250 ms later is right anyway.
+
+   Nothing here fires while LED_ALWAYS_ON is 1: the light went on at boot and
+   the elapsed time has been hours. */
+void ledForCapture() {
+  lastCaptureAt = millis();
+  ledApply();
+  if (ledMutex) xSemaphoreTake(ledMutex, portMAX_DELAY);
+  bool lit = ledLit;
+  unsigned long on = millis() - ledLitAt;
+  if (ledMutex) xSemaphoreGive(ledMutex);
+  // Dark on purpose (/api/light?on=0) means there is nothing to settle for.
+  if (lit && on < LED_SETTLE_MS) delay(LED_SETTLE_MS - on);
+}
+
+/* Red, green, blue, white — one second each, to check the wiring and the
+   colour order. Driven from loop() rather than looped inside the handler:
+   all port-80 handlers share one task, so four seconds of sleeping there
+   would freeze the +/- buttons with it.
+
+   Each colour is held for a second of loop time MEASURED FROM WHEN IT WAS
+   ACTUALLY SHOWN, not from the start of the test. Deriving the step from the
+   clock looks equivalent and is not: loop() blocks for whole seconds inside
+   uploadFrame()'s TLS POST, and for up to a minute inside checkFirmware().
+   Tap the button while a press upload is going out — five seconds after a
+   press, so exactly when someone is exercising the motor and the wiring
+   together — and the clock-driven version skips colours, or finds step >= 4
+   on its first pass and logs "done" having shown nothing. This is the test
+   that decides RGB versus GRB. Running long is fine; skipping green is not,
+   because it reads as "the pixel is wrong" and costs a reflash and a drive.
+
+   Re-tapping during a run is ignored rather than restarting: nothing is
+   gained by cutting a sequence short, and it keeps every one of these
+   variables owned by loop() alone. */
+#define LED_TEST_STEP_MS 1000UL
+void ledTestUpdate() {
+  // The white step is the compiled LED_LEVEL, not whatever the slider is on:
+  // this is a reference the test always ends at, so "is white white" has the
+  // same answer during an experiment as outside one.
+  static const uint8_t SEQ[4][3] = {
+    {255, 0, 0}, {0, 255, 0}, {0, 0, 255}, {LED_LEVEL, LED_LEVEL, LED_LEVEL}
+  };
+  if (!ledTestRunning) { ledTestStep = -1; return; }   // armed runs start at 0
+  if (ledTestStep >= 0 && millis() - ledTestStepAt < LED_TEST_STEP_MS) return;
+  ledTestStep++;
+  if (ledTestStep >= 4) {
+    ledTestStep = -1;
+    ledLit = ledShouldBeLit();              // hand the pixel back to the rules
+    ledSet(ledLit);
+    ledTestRunning = false;   // last: ledApply() stays out until the pixel is
+                              // back to the state the rules want
+    logLine("LED test: done");
+    return;
+  }
+  ledTestStepAt = millis();
+  ledWrite(SEQ[ledTestStep][0], SEQ[ledTestStep][1], SEQ[ledTestStep][2]);
+}
+
+void ledInit() {
+  ledMutex = xSemaphoreCreateMutex();
+  ledLit = false;
+  ledSet(false);            // a pixel powers up in an undefined state
+  ledApply();               // ... and comes straight back on when it is constant
+  logLine(LED_ALWAYS_ON ? "Light: WS2812 on D3, constant"
+                        : "Light: WS2812 on D3, lit only while the picture is in use");
+}
+
+/* ============================================================
  *  WEB
  *  The page text is Swedish on purpose – the patient reads it.
  * ============================================================ */
@@ -387,6 +628,12 @@ setInterval(()=>{
   }
 }, 1000);
 nextFrame();
+// Tells the device someone is looking, so the lamp over the meter stays lit
+// steadily. /bild alone would blink it off during a network hiccup, and it
+// stops within a minute of the page being closed or the phone locked.
+function pulse(){ if(document.visibilityState==='visible') fetch('/api/ui-pulse').catch(()=>{}); }
+pulse(); setInterval(pulse,20000);
+document.addEventListener('visibilitychange',pulse);
 const allButtons=()=>document.querySelectorAll('.buttons button');
 async function press(op,deg){
   allButtons().forEach(b=>b.disabled=true);
@@ -509,6 +756,115 @@ esp_err_t h_engine(httpd_req_t *req) {
   httpd_resp_set_hdr(req, "Cache-Control", "public, max-age=31536000, immutable");
   return httpd_resp_send(req, BALLDETECTOR_JS, HTTPD_RESP_USE_STRLEN);
 }
+/* "Someone has this page open right now." Every UI that shows the picture
+   calls it every 20 s while it is visible.
+
+   /bild alone would nearly do the job, but its window is 3 s and the pages
+   back off a second when a request fails — so a wifi hiccup would blink the
+   light off and on over the meter she is trying to read. A minute of slack
+   costs nothing and makes the light steady.
+
+   No PIN check, deliberately: it changes no device state, the control panel
+   calls it cross-origin and has no way to know a PIN, and the worst it can
+   do is keep a lamp on for a minute. /api/status is open for the same
+   reason, while /api/steg — which does change state — is not. */
+esp_err_t h_uipulse(httpd_req_t *req) {
+  lastUiPulseAt = millis();
+  ledApply();               // no settle wait: nothing is being captured here
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+  return httpd_resp_send(req, "{\"ok\":true}", HTTPD_RESP_USE_STRLEN);
+}
+/* Starts the colour cycle and answers at once — see ledTestUpdate(). Setting
+   the flag last means loop() cannot catch the sequence half-armed. */
+esp_err_t h_ledtest(httpd_req_t *req) {
+  if (!pinOK(req)) return httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "pin");
+  ledTestRunning = true;    // the only cross-task variable the test has; the
+                            // step and its clock belong to loop()
+  logLine("LED test: red, green, blue, white");
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+  return httpd_resp_send(req, "{\"ok\":true}", HTTPD_RESP_USE_STRLEN);
+}
+/* The light, adjustable while you watch what it does to the reading.
+   GET returns the state; ?on=0|1, ?level=0..255 and ?rgb=RRGGBB set it.
+
+   RAM only, like /api/steg: `standard` in the reply is the compiled LED_LEVEL
+   the device returns to on any restart. That is the safety net for the whole
+   endpoint — the calibration is bound to one lighting, so a unit left in a
+   test light reads wrong, and here the way out is a power blip rather than a
+   trip. The control panel says so out loud when the values differ.
+
+   PIN-checked: unlike /api/ui-pulse this changes device state. */
+esp_err_t h_light(httpd_req_t *req) {
+  if (!pinOK(req)) return httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "pin");
+  char buf[160]; char val[16] = "";
+  /* Parsed into locals first, then moved across under the mutex in one go.
+     Assigning straight to the globals would let loop()'s ledApply() land
+     between the level and the tint and drive the pixel with half of each. It
+     would correct itself on the next call, but "it converges" is not the same
+     as "it is right", and the fix is four lines. */
+  bool     newOn    = lightEnabled;
+  int      newLevel = lightLevel;
+  uint8_t  nr = lightR, ng = lightG, nb = lightB;
+  bool changed = false;
+  if (httpd_req_get_url_query_str(req, buf, sizeof(buf)) == ESP_OK) {
+    // Only "0" and "1". An empty ?on= must not read as "off": every other
+    // parameter here ignores junk, and a stray & turning the light out is
+    // exactly the kind of surprise this endpoint should not have.
+    if (httpd_query_key_value(buf, "on", val, sizeof(val)) == ESP_OK &&
+        (strcmp(val, "0") == 0 || strcmp(val, "1") == 0)) {
+      newOn = (val[0] == '1');
+      changed = true;
+    }
+    if (httpd_query_key_value(buf, "level", val, sizeof(val)) == ESP_OK) {
+      char *end = NULL;
+      long v = strtol(val, &end, 10);
+      if (end != val && *end == '\0' && v >= 0) {      // junk = ignored, as /api/steg
+        if (v > 255) v = 255;
+        newLevel = (int)v;
+        changed = true;
+      }
+    }
+    if (httpd_query_key_value(buf, "rgb", val, sizeof(val)) == ESP_OK &&
+        strlen(val) == 6) {
+      char *end = NULL;
+      long v = strtol(val, &end, 16);
+      if (end != val && *end == '\0' && v >= 0) {
+        nr = (v >> 16) & 0xFF; ng = (v >> 8) & 0xFF; nb = v & 0xFF;
+        changed = true;
+      }
+    }
+  }
+  if (changed) {
+    if (ledMutex) xSemaphoreTake(ledMutex, portMAX_DELAY);
+    lightEnabled = newOn; lightLevel = newLevel;
+    lightR = nr; lightG = ng; lightB = nb;
+    ledDirty = true;      // an on/off change would move ledLit anyway; a level
+                          // or tint change is only visible through this flag
+    if (ledMutex) xSemaphoreGive(ledMutex);
+  }
+  ledApply();
+  if (changed) {
+    // In the log because a light that is not the compiled one explains a week
+    // of odd readings, and /log is where that question gets asked.
+    char l[96];
+    snprintf(l, sizeof(l), "Light: %s, level %d, rgb %02x%02x%02x",
+             lightEnabled ? "on" : "off", lightLevel,
+             (int)lightR, (int)lightG, (int)lightB);
+    logLine(l);
+  }
+  char b[160];
+  snprintf(b, sizeof(b),
+           "{\"on\":%s,\"level\":%d,\"rgb\":\"%02x%02x%02x\","
+           "\"standard\":%d,\"always\":%s}",
+           lightEnabled ? "true" : "false", lightLevel,
+           (int)lightR, (int)lightG, (int)lightB,
+           LED_LEVEL, LED_ALWAYS_ON ? "true" : "false");
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+  return httpd_resp_send(req, b, HTTPD_RESP_USE_STRLEN);
+}
 esp_err_t h_log(httpd_req_t *req) {
   String s;
   for (int i = 0; i < 40; i++) {
@@ -519,6 +875,8 @@ esp_err_t h_log(httpd_req_t *req) {
   return httpd_resp_send(req, s.c_str(), s.length());
 }
 esp_err_t h_snapshot(httpd_req_t *req) {
+  ledForCapture();          // the image content and format are untouched;
+                            // only the light it is taken in changes
   camera_fb_t *fb = esp_camera_fb_get();
   if (!fb) return httpd_resp_send_500(req);
   httpd_resp_set_type(req, "image/jpeg");
@@ -553,7 +911,8 @@ esp_err_t h_stream(httpd_req_t *req) {
 void startWebServer() {
   httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
   cfg.server_port = 80;
-  cfg.max_uri_handlers = 12;
+  cfg.max_uri_handlers = 16;   // 13 registered; registration fails silently
+                               // above this, so keep headroom over the count
   // Several people may watch at once — /bild is a plain one-shot request
   // with no viewer kickout, so they all get frames. The default is to
   // REFUSE a new connection once the 7 sockets are taken, which would
@@ -576,6 +935,9 @@ void startWebServer() {
     u = {.uri="/motor.js",      .method=HTTP_GET, .handler=h_engine,  .user_ctx=NULL}; httpd_register_uri_handler(ctrl_httpd,&u);
     u = {.uri="/log",           .method=HTTP_GET, .handler=h_log,     .user_ctx=NULL}; httpd_register_uri_handler(ctrl_httpd,&u);
     u = {.uri="/bild",          .method=HTTP_GET, .handler=h_snapshot,.user_ctx=NULL}; httpd_register_uri_handler(ctrl_httpd,&u);
+    u = {.uri="/api/ui-pulse",   .method=HTTP_GET, .handler=h_uipulse, .user_ctx=NULL}; httpd_register_uri_handler(ctrl_httpd,&u);
+    u = {.uri="/api/led-test",  .method=HTTP_GET, .handler=h_ledtest, .user_ctx=NULL}; httpd_register_uri_handler(ctrl_httpd,&u);
+    u = {.uri="/api/light",     .method=HTTP_GET, .handler=h_light,   .user_ctx=NULL}; httpd_register_uri_handler(ctrl_httpd,&u);
   }
   if (cameraOK) {
     httpd_config_t cfg2 = HTTPD_DEFAULT_CONFIG();
@@ -673,6 +1035,18 @@ unsigned long lastFwCheck = 0;
    has its own task, so only the heartbeat pauses. */
 bool uploadFrame(const char *reason) {
   if (strlen(INGEST_URL) == 0) return false;
+  /* Lit like every other analysed frame, and this is not optional. The
+     calibration is bound to one lighting; once the reference is swept under
+     the LED, a frame taken in whatever ambient light happens to be in the
+     kitchen fails the contrast gate. Leaving this out would mean every
+     periodic upload is refused — the archive goes dark exactly where it is
+     the only record, because nobody is watching when it is taken.
+
+     A no-op while LED_ALWAYS_ON is 1. With it at 0 this is the one caller
+     that has no page behind it, so it is also the one that pays the settling
+     time — 200 ms, nothing next to the TLS POST below, which already blocks
+     for seconds on the same task. */
+  ledForCapture();
   camera_fb_t *fb = esp_camera_fb_get();
   if (!fb) return false;
 
@@ -1021,6 +1395,8 @@ void setup() {
   motorInit();
   Serial.printf("Motor: NEMA17+TMC2209, %d degrees/press\n", DEG_PER_PRESS);
 
+  ledInit();
+
   esp_log_level_set("cam_hal", ESP_LOG_NONE);  // silence harmless FB-OVF lines
   cameraOK = cameraInit();
   logLine(cameraOK ? "Camera OK" : "CAMERA FAILED (check the PSRAM setting!)");
@@ -1112,6 +1488,12 @@ void loop() {
     lastFwCheck = millis();
     checkFirmware();
   }
+
+  // The pixel's off-switch: the handlers only stamp a time, the state itself
+  // is settled here. ledApply() returns early while the colour test is
+  // running, so the two never fight over the pixel.
+  ledTestUpdate();
+  ledApply();
 
   static bool on = false;
   static unsigned long t = 0;
