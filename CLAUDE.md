@@ -328,8 +328,9 @@ breaks. Any new endpoints the pages read need the same headers —
 are fire-and-forget by design.
 
 ### Calibration is baked in — do not regenerate casually
-Both files embed a reference image (median of the 25 labeled frames of
-the second 2026-08-16 sweep, 09:37-09:42, 8-bit grayscale — the engine converts to gray as its
+Both files embed a reference image (median of the 23 labelled frames of the
+2026-08-22 sweep, 20:06-20:14, taken under the WS2812 at level 50 in a dark
+kitchen, 8-bit grayscale — the engine converts to gray as its
 first step, so color would only triple the file for data it discards) and
 a quadratic y->flow calibration bound to the exact camera pose and 4:3
 aspect ratio at calibration time. A physical camera move, refocus, or
@@ -340,13 +341,27 @@ change firmware camera settings (resolution, hmirror, vflip, format).
 The camera was moved and everything regenerated on 2026-08-16; the
 earlier sweep and its `0.1L` mislabel no longer apply.
 
-**A lighting change invalidates it too**, and v1.10.0 is one: the WS2812
-replaces the desk lamp that lit the meter (see "The meter light"). Until a
-fresh sweep is taken under the pixel, the reference is a picture of a room
-lit a different way, and the contrast and registration gates are what will
-notice. Take the sweep in exactly the lighting the unit will then run in —
-lamp off, pixel on — because a reference that averages both bakes in a lamp
-that is about to be removed.
+**A lighting change invalidates it too.** Done for the WS2812 on 2026-08-22:
+new sweep, new reference, new bands, new curve. Take any future sweep in
+exactly the lighting the unit will then run in — a reference that averages two
+lightings bakes in one that is about to go away.
+
+Measured over that sweep: mean error 0.030 L/min, worst 0.110 — and that worst
+is a single frame whose label disagrees with its own neighbours by 0.1
+(y=316.8 interpolates to 2.40 between its 2.0 and 2.5 neighbours; the engine
+says 2.41 and the label says 2.3), so worst against the rest is 0.059.
+Margins: contrast 0.173 (gate 0.10), ambiguity 15.9x (3.0), registration
+**0.982** (0.75), spread 38 (75). Registration is the one to note — the
+previous calibration's worst frame sat at 0.783 against a 0.75 gate, i.e. on
+the edge, and CLAUDE.md said so as "where this will break next". The new
+camera pose with its own light is nowhere near it, and every frame reports
+zero tilt deviation and under a pixel of dx/dy.
+
+The bands moved with the camera: ball 246..278 -> **253..285**, anchor
+222..250 -> **233..261**, window 120..455 -> **125..466**, BASE_TILT
+-0.0209 -> **+0.066** (3.78 degrees, confirmed against a line drawn along the
+tube by hand: 3.7). Each was measured over the sweep, not carried over — see
+the comments at each constant for what was tried and what it cost.
 
 ### The engine has one source: `balldetector.js`
 Edit the detection engine **only** in `balldetector.js`, then run
