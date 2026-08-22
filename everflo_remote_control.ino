@@ -68,7 +68,7 @@
    1.10.0 a step up from 1.9.7 rather than a step back. Nothing sorts them
    anyway: the firmware, the Worker and publish_firmware.mjs all compare for
    equality only. */
-#define FW_VERSION "1.10.1"
+#define FW_VERSION "1.10.2"
 
 /* ---------------- MOTOR ---------------- */
 #define USE_TMC_UART 0            // 1 = current control + true freewheel over UART
@@ -530,9 +530,13 @@ static const char PAGE[] = R"HTML(
  #flow small{font-size:1.1rem;color:#666;font-weight:400}
  #flow.warn{color:#b8860b}
  #flow.none{color:#a33;font-size:1.7rem}
- #camwrap{width:90%;max-width:432px;overflow:hidden;border-radius:12px;
+ /* Sized by viewport height, not width: what she is looking at is a tall
+    narrow tube, and the crop below makes it taller and narrower still. Left
+    to width:100% the element would be stretched to the wrapper and then
+    letterboxed back down by object-fit, wasting most of the screen on black. */
+ #camwrap{width:auto;max-width:100%;overflow:hidden;border-radius:12px;
           background:#000;position:relative;display:flex}
- #cv{width:100%;height:auto;max-height:44vh;object-fit:contain;display:block}
+ #cv{height:52vh;width:auto;max-width:100%;display:block}
  #camwrap.stale #cv{opacity:.3}
  #stale{display:none;position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);
         background:#a33;color:#fff;text-align:center;padding:14px 10px;
@@ -555,7 +559,7 @@ static const char PAGE[] = R"HTML(
  .small{font-size:.85rem;color:#888;margin-top:12px;text-align:center}
 </style></head><body>
 <h1>Syrgas</h1>
-<div id="camwrap"><canvas id="cv" width="480" height="640"></canvas>
+<div id="camwrap"><canvas id="cv" width="225" height="640"></canvas>
 <div id="stale">Bilden uppdateras inte<small id="staleAge"></small></div></div>
 <div id="flow">–<small> L/min</small></div>
 <div class="buttons">
@@ -586,7 +590,8 @@ loadRef().then(()=>{refReady=true})
 function orient(img){
   const t=document.createElement('canvas');
   t.width=img.height; t.height=img.width;
-  const tx=t.getContext('2d');
+  // willReadFrequently: analyse() reads this canvas now, not the visible one.
+  const tx=t.getContext('2d',{willReadFrequently:true});
   tx.translate(t.width/2,t.height/2);
   tx.scale(-1,1);
   tx.rotate(270*Math.PI/180);
@@ -600,16 +605,29 @@ function show(text,unit,cls){
 }
 function nextFrame(){ const i=new Image(); i.onload=()=>{ frame(i); setTimeout(nextFrame,250); };
   i.onerror=()=>setTimeout(nextFrame,1000); i.src='/bild?t='+Date.now(); }
+/* What she SEES is the meter alone, x 215..440 of the oriented frame. The LED
+   sits left of the tube and blazes into the lens: measured over the 2026-08-22
+   sweep, mean column brightness peaks at 175 around x 175 and falls off a
+   cliff between x 210 (153) and x 220 (119). Cropping there drops the glare
+   and roughly doubles how big the ball is on her phone.
+
+   The ANALYSIS still gets the whole 480x640 frame — the crop is display only,
+   so no band, no registration and no calibration constant is touched. Cutting
+   this close leaves little margin if the camera slides sideways, and that is
+   the right trade: past about 20 px the engine refuses the reading anyway, and
+   the control panel still shows the full frame for working out why. */
+const CROP_X=215, CROP_W=225;
 function frame(img){
   lastFrameAt=Date.now();
+  const t=orient(img);
   ctx.setTransform(1,0,0,1,0,0);
-  ctx.drawImage(orient(img),0,0,480,640);
+  ctx.drawImage(t, CROP_X,0,CROP_W,640, 0,0,CROP_W,640);
   // Once a second is plenty: the ball moves slowly and analysis costs
   // real work on a phone.
   if(!refReady || Date.now()-lastAnalysis<1000) return;
   lastAnalysis=Date.now();
   let r,b;
-  try{ r=analyze(ctx.getImageData(0,0,480,640)); b=judge(r); }
+  try{ r=analyze(t.getContext('2d').getImageData(0,0,480,640)); b=judge(r); }
   catch(e){ show('Ingen avläsning','','none');
              document.getElementById('msg').textContent=''; return; }
   if(!b.ok){ show(b.title,'','none'); document.getElementById('msg').textContent=b.reason; return; }
