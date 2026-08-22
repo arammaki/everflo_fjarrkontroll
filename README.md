@@ -65,14 +65,30 @@ phone.
 ## Commands
 
 ```sh
-# Build and flash (device on USB). Never flash unattended — verify on site.
+# Flash over her wifi. This is the normal way now — you must be on the same
+# network. Two steps on purpose: the first is inert and shows you the version,
+# size, md5 and target, the second replaces the firmware and reboots the unit.
+./tools/ota_flash.sh                 # build, then show what would be sent
+./tools/ota_flash.sh -y              # ... and send it
+./tools/ota_flash.sh 192.168.1.21 -y # by address; default is syrgas.local
+
+# First flash of a new board, and recovery when a build will not boot.
+# There is no bootloader rollback, so this is the only way back.
 "/Applications/Arduino IDE.app/Contents/Resources/app/lib/backend/resources/arduino-cli" \
   --config-file ~/.arduinoIDE/arduino-cli.yaml compile --upload \
   -p /dev/cu.usbmodem2101 --fqbn esp32:esp32:XIAO_ESP32S3:PSRAM=opi .
 
+# Update from anywhere. Publishing is inert; arming is what lets a unit at a
+# patient's home replace its own firmware, so it costs its own command. Only
+# ever arm a build already seen to boot — recovery is a trip with a cable.
+node tools/publish_firmware.mjs publish build/ota/everflo_remote_control.ino.bin 1.10.4
+node tools/publish_firmware.mjs arm 1.10.4
+node tools/publish_firmware.mjs status | disarm
+
 node build_webui.mjs              # after ANY edit to balldetector.js
 node build_webui.mjs --check      # run before committing
-node tools/validate_engine.mjs ~/Downloads   # engine vs labelled images
+node tools/validate_engine.mjs <dir>   # engine vs labelled bild_*.jpg
+node tools/score_uploads.mjs <dir>     # engine vs real uploaded frames
 
 cd cloud && npx wrangler deploy   # ingest Worker
 cd cloud/admin && npx wrangler deploy
