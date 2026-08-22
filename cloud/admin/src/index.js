@@ -89,7 +89,7 @@ function label(flow, state) {
 }
 const good = (state) => state === 'ok' || state === 'max' || state === 'below';
 
-function renderPage(rows, now) {
+function renderPage(rows, now, epochs) {
   const latest = rows[0];
   const age = latest ? now - Date.parse(latest.received_at) : null;
   // Uploads are every 15 min; nothing for 40 means something is wrong.
@@ -206,6 +206,40 @@ ${banner}
   <button id="allt">Räkna om alla</button>
   <span class="liten" id="progress"></span>
 </div>
+
+<details id="epok">
+  <summary>Analysera bara från en viss tidpunkt</summary>
+  <p class="liten" style="text-align:left">En motor är kalibrerad mot ett kameraläge
+  och ett ljus. Kör den på bilder från före den kalibreringen och du får rader som
+  antingen underkänns eller ljuger — de gamla avläsningarna tar ingen skada
+  (<code>analyses</code> har en rad per motorversion och skriver aldrig över), men
+  tabellen blir svårläst och en framtida jämförelse missvisande.
+  <b>Gränsen är en tidpunkt.</b> Firmwarelistan nedan är ett sätt att fylla i den,
+  inte ett eget filter — versionsnummer går inte att jämföra som text
+  (<code>1.10.0</code> sorterar före <code>1.9.7</code>), och viktigare: en
+  hårdvaruändring följer inte versionsgränsen. LED:en kopplades in mitt i
+  <code>v1.10.0</code>, och kameran justerades färdigt en kvart senare än så.
+  Uppmätt mot motor <code>79d22250</code>: bildruta 1161 (19:52) ger passning
+  0,745 och underkänns, 1162 (20:06:18) ger 0,982 och läses. Den gränsen syns
+  bara i tiden.</p>
+  <div class="bar">
+    <label class="liten">Från och med
+      <input id="frantid" type="text" size="21" placeholder="2026-08-22T20:00:00"></label>
+    <label class="liten">eller från firmware
+      <select id="franfw"><option value="">— välj —</option>${
+        epochs.map((e) => `<option value="${escapeHtml(e.first_seen)}">v${
+          escapeHtml(e.fw)} (${escapeHtml(e.first_seen.replace('T', ' ').slice(0, 16))})</option>`).join('')
+      }</select></label>
+    <button id="franrensa" class="liten">Rensa</button>
+  </div>
+  <table class="liten" id="epoktab">
+  <thead><tr><th>Firmware</th><th>Första bilden</th><th>Sista bilden</th><th>Bilder</th></tr></thead>
+  <tbody>${epochs.map((e) => `<tr><td>v${escapeHtml(e.fw)}</td>
+    <td class="t">${escapeHtml(e.first_seen.replace('T', ' ').slice(0, 19))}</td>
+    <td class="t">${escapeHtml(e.last_seen.replace('T', ' ').slice(0, 19))}</td>
+    <td class="num">${e.n}</td></tr>`).join('')}</tbody>
+  </table>
+</details>
 <p class="liten">Klicka på en rad eller stega med piltangenterna. Avläsningen räknas ut
 här i webbläsaren av motorn <code>${ENGINE_VERSION}</code> och sparas per motorversion.
 <em>Tidigare motor</em> är tom tills en annan motorversion analyserat samma bild — den
@@ -351,6 +385,52 @@ addEventListener('keydown',e=>{
   if(e.key==='ArrowDown'||e.key==='j'){ e.preventDefault(); select(sel+1,{scroll:true}); }
   if(e.key==='ArrowUp'||e.key==='k'){ e.preventDefault(); select(sel-1,{scroll:true}); }
 });
+/* The cutoff is one ISO8601 string, and rows carry theirs in data-tid, so the
+   comparison is a plain string compare — ISO8601 sorts chronologically by
+   construction, which is the whole reason to hold the boundary as a time
+   rather than as a firmware version. Remembered per browser: picking the
+   epoch again after every reload is how you end up not bothering.
+
+   The shape is checked, and that is not fussiness. A lexical compare against a
+   sloppy date is silently wrong in a way a human cannot see: "2026-9" is
+   GREATER than "2026-08-22T19:19:00", because '9' beats '0', so every row
+   falls outside the epoch and the sweep quietly does nothing. A prefix like
+   "2026-08-22" is fine and useful, so the pattern allows any prefix of an
+   ISO8601 stamp — but only a well-formed one, and it must also accept the
+   full form the firmware picker writes, milliseconds and Z included. Rejecting
+   what the page's own dropdown fills in would have disabled the sweep the
+   moment anyone used it.
+
+   The space form gets normalised to T for the same reason the pattern exists.
+   "2026-08-22 20:06" reads correctly to a human and compares wrong: rows carry
+   a T, 'T' (0x54) beats ' ' (0x20), so the time part would be ignored and only
+   the date would bite. */
+const EPOK_RE=/^\d{4}-\d{2}(-\d{2}([T ]\d{2}(:\d{2}(:\d{2}(\.\d{1,3})?)?)?Z?)?)?$/;
+const cutoffRaw=()=>document.getElementById('frantid').value.trim();
+const cutoffOk=()=>{ const c=cutoffRaw(); return !c || EPOK_RE.test(c); };
+const cutoff=()=>{ const c=cutoffRaw(); return EPOK_RE.test(c) ? c.replace(' ','T') : ''; };
+function inEpoch(tr){ const c=cutoff(); return !c || (tr.dataset.tid||'') >= c; }
+function updateCount(){
+  const raw=cutoffRaw(), c=cutoff(), ok=cutoffOk();
+  const a=document.getElementById('all'), b=document.getElementById('allt');
+  const f=document.getElementById('frantid');
+  f.style.background = ok ? '' : '#fdd';
+  a.disabled=b.disabled=!ok;
+  if(!ok){ a.textContent='Datumet går inte att tolka'; return; }
+  const n=rows.filter(tr=>tr.dataset.key && !tr.dataset.nu && inEpoch(tr)).length;
+  a.textContent = n ? 'Analysera '+n+' rader'+(c?' från '+c.slice(0,16):'')
+                    : (c ? 'Inget kvar i den epoken' : 'Alla är analyserade');
+  try{ raw ? localStorage.setItem('ev_epok',raw) : localStorage.removeItem('ev_epok'); }catch(e){}
+}
+try{ const c=localStorage.getItem('ev_epok'); if(c) document.getElementById('frantid').value=c; }catch(e){}
+document.getElementById('frantid').oninput=updateCount;
+document.getElementById('franfw').onchange=e=>{
+  if(e.target.value){ document.getElementById('frantid').value=e.target.value; updateCount(); } };
+document.getElementById('franrensa').onclick=()=>{
+  document.getElementById('frantid').value='';
+  document.getElementById('franfw').value=''; updateCount(); };
+updateCount();
+
 /* Sequential on purpose: the flatfield is real work and firing 200 of them at
    once would lock the tab. Skips rows this engine has already done, unless
    asked to redo everything. */
@@ -359,7 +439,7 @@ async function sweep(force){
   const prog=document.getElementById('progress');
   a.disabled=b.disabled=true;
   if(!refReady){ await loadRef(); refReady=true; }
-  const todo=rows.filter(tr=>tr.dataset.key && (force || !tr.dataset.nu));
+  const todo=rows.filter(tr=>tr.dataset.key && inEpoch(tr) && (force || !tr.dataset.nu));
   let n=0, failed=0;
   for(const tr of todo){
     prog.textContent=(++n)+' / '+todo.length;
@@ -375,8 +455,14 @@ async function sweep(force){
     await new Promise(r=>setTimeout(r,0));   // let the page repaint
   }
   await flush();
-  prog.textContent=todo.length+' analyserade, '+failed+' utan avläsning';
-  a.disabled=b.disabled=false; a.textContent='Alla är analyserade';
+  // Only what the epoch held back, not everything outside it: rows this engine
+  // had already done were never candidates, and counting them reads as work
+  // that was declined.
+  const skipped=rows.filter(tr=>tr.dataset.key && !inEpoch(tr)
+                                && (force || !tr.dataset.nu)).length;
+  prog.textContent=todo.length+' analyserade, '+failed+' utan avläsning'+
+    (skipped? ', '+skipped+' utanför epoken' : '');
+  a.disabled=b.disabled=false; updateCount();
 }
 document.getElementById('all').onclick=()=>sweep(false);
 document.getElementById('allt').onclick=()=>sweep(true);
@@ -507,7 +593,21 @@ export default {
         ORDER BY r.received_at DESC LIMIT ?2`
     ).bind(ENGINE_VERSION, PAGE_SIZE).all();
 
-    return new Response(renderPage(results, Date.now()), {
+    /* When each firmware version was first and last seen. This is the table
+       that lets a human pick a boundary they can reason about: the LED went in
+       with one version, the camera moved with another, and those events are
+       what actually invalidate an older engine's calibration. Ordered newest
+       first because the boundary you want is nearly always a recent one. */
+    const { results: epochs } = await env.DB.prepare(
+      `SELECT fw, MIN(received_at) AS first_seen, MAX(received_at) AS last_seen,
+              COUNT(*) AS n
+         FROM readings
+        WHERE fw IS NOT NULL AND fw <> ''
+        GROUP BY fw
+        ORDER BY first_seen DESC`
+    ).all();
+
+    return new Response(renderPage(results, Date.now(), epochs), {
       headers: { 'content-type': 'text/html; charset=utf-8' },
     });
   },

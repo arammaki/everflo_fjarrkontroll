@@ -529,6 +529,27 @@ frame before believing it over the engine.
 The labelled images themselves are not in the repo (they are the user's);
 the Playwright suite that does leave-one-out lives outside it too.
 
+### An engine's calibration has an epoch, and it is a time
+A detection engine is calibrated against one camera pose and one lighting, so
+running it over frames from before that calibration produces rows that are
+noise. The admin page can therefore restrict a re-analysis to frames from a
+given time onward (`<details id="epok">`), with the firmware table as a way to
+fill that time in.
+
+**The boundary is a timestamp, not a firmware version**, and 2026-08-22 is why:
+the WS2812 went in mid-`v1.10.0` and the camera was still being nudged for
+another quarter of an hour after that. Measured against engine `79d22250`,
+frame 1161 (19:52) registers 0.745 and is refused, frame 1162 (20:06:18)
+registers 0.982 and reads. No version number expresses that. Version strings
+also do not compare as text — `1.10.0` sorts before `1.9.7` — while ISO8601
+sorts chronologically by construction, which is what the filter relies on.
+
+Worth knowing before worrying about it: the engine **refuses** pre-epoch
+frames rather than misreading them — registration catches the wrong camera
+pose, as it is meant to. The filter keeps the table readable; it is not what
+keeps the numbers honest. And `analyses` is keyed `(reading_id, engine)`, so
+re-analysing never overwrites what an older engine said about a frame.
+
 ### The control panel is two columns on a laptop
 `#cols` wraps `#view` (rotation/mirror, the picture, the reading, the quality
 line) and `#panel` (everything else). One column below 920 px — the phone
