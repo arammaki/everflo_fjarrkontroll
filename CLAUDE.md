@@ -511,6 +511,20 @@ frame before believing it over the engine.
 The labelled images themselves are not in the repo (they are the user's);
 the Playwright suite that does leave-one-out lives outside it too.
 
+### The control panel is two columns on a laptop
+`#cols` wraps `#view` (rotation/mirror, the picture, the reading, the quality
+line) and `#panel` (everything else). One column below 920 px — the phone
+layout is untouched — and side by side above it, with `#view` sticky so the
+picture stays put while the controls scroll. Anything added to the page now
+goes inside one of those two wrappers.
+
+The breakpoint is deliberately high: two columns narrower than what the phone
+layout gives would make the desktop worse than the phone. And `canvas` is
+capped at `calc(100vh - 290px)` in the wide layout rather than left free —
+the reading and the quality line still sit under the picture, and a picture
+free to fill the viewport pushes the number this page exists to show below
+the fold.
+
 ### The control panel's light section (v1.10.0)
 `<details id="light">` on `everflo_control_panel.html` only — never on the
 device page. On/off, a 0-255 brightness slider and a colour swatch, all

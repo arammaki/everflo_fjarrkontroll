@@ -41,6 +41,30 @@
  #light label input[type=color]{flex:0 0 auto;padding:0;width:46px;height:32px}
  #lVal{font-family:monospace;color:#333;min-width:2.2em;text-align:right}
  #lightState.warn{color:#a33;font-weight:600}
+ /* One column on a phone, unchanged. Side by side as soon as the window can
+    hold two full-width ones — picking a step size and pressing while watching
+    the ball is one operation, and scrolling between them is what made it two.
+    The breakpoint is set so each column is at least as wide as the phone
+    layout gives it: narrower columns would make the desktop worse than the
+    phone, which is the wrong way round. */
+ #cols{display:flex;flex-direction:column;align-items:center;gap:10px;width:100%}
+ #view,#panel{display:flex;flex-direction:column;align-items:center;gap:10px;
+              width:100%;max-width:480px}
+ @media (min-width:920px){
+   #cols{flex-direction:row;align-items:flex-start;justify-content:center;
+         gap:24px;max-width:1010px}
+   #view,#panel{flex:1 1 0}
+   /* Sticky so the picture stays put while the controls scroll: the whole
+      point is never having to choose which of the two to look at. */
+   #view{position:sticky;top:12px}
+   /* The 46vh cap exists so the picture and the buttons share one phone
+      screen. Here the competition is different: the buttons have moved to
+      their own column, but the reading and the quality line still sit under
+      the picture, and a picture free to fill the viewport pushes them off
+      the bottom. The number this page exists to show must never be the part
+      you have to scroll for. */
+   canvas{max-height:calc(100vh - 290px)}
+ }
 </style></head><body>
 <h1>Bolldetektor (körs i telefonen)</h1>
 <div class="row">
@@ -48,6 +72,9 @@
   <button onclick="start()">Starta</button>
 </div>
 <div id="status">Ange adress och tryck Starta</div>
+
+<div id="cols">
+<div id="view">
 <div class="row">
   <select id="rotation">
     <option value="0">Rotation 0&deg;</option>
@@ -62,6 +89,9 @@
 <div id="wrap"><canvas id="cv" width="480" height="640"></canvas></div>
 <div class="big"><span id="flow">–</span> <small id="unit">L/min</small></div>
 <div id="quality"></div>
+</div><!-- #view -->
+
+<div id="panel">
 <div class="row steps">
   <input id="d1" type="number" value="39" inputmode="numeric">
   <input id="d2" type="number" value="90" inputmode="numeric">
@@ -133,6 +163,8 @@
 vrids för hand, och molnloggen har den faktiska vridningen per tryck.</div>
 <div class="hint">Ingen kalibrering behövs — metoden är förkalibrerad mot riggens kamerapose.
 Flyttas kameran: ta ny bildsvepning med "Spara bild" och skicka till Claude.</div>
+</div><!-- #panel -->
+</div><!-- #cols -->
 
 <script>
 /* === ENGINE:BEGIN — generated from balldetector.js, do not edit here === */
